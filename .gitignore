@@ -1,0 +1,50 @@
+## .NET and Visual Studio
+bin/
+obj/
+out/
+[Bb]uild/
+[Ll]og/
+[Ll]ogs/
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.sln.docstates
+
+## Test Results and Coverage
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+coverage/
+*.coverage
+*.coveragexml
+
+## Database files
+*.mdf
+*.ldf
+*.ndf
+*.db
+*.sqlite
+*.sqlite3
+
+## User-specific / Local Secrets
+appsettings.*.local.json
+secrets.json
+.env
+.env.*
+!.env.example
+
+## Rider / JetBrains
+.idea/
+*.sln.iml
+
+## OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
