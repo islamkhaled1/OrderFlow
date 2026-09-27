@@ -231,101 +231,127 @@ sequenceDiagram
 
 ```text
 OrderFlow/
-â”œâ”€â”€ OrderFlow.sln
-â”œâ”€â”€ docker-compose.yml
-â”œâ”€â”€ .gitignore
-â”œâ”€â”€ .editorconfig
-â”œâ”€â”€ LICENSE
-â”œâ”€â”€ README.md
-â”‚
-â”œâ”€â”€ src/
-â”‚   â”œâ”€â”€ OrderFlow.Domain/
-â”‚   â”‚   â”œâ”€â”€ Common/
-â”‚   â”‚   â”œâ”€â”€ Entities/
-â”‚   â”‚   â”‚   â”œâ”€â”€ Customer.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ Product.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ Order.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderItem.cs
-â”‚   â”‚   â”œâ”€â”€ Enums/
-â”‚   â”‚   â”‚   â””â”€â”€ OrderStatus.cs
-â”‚   â”‚   â””â”€â”€ Exceptions/
-â”‚   â”‚       â””â”€â”€ DomainException.cs
-â”‚   â”‚
-â”‚   â”œâ”€â”€ OrderFlow.Application/
-â”‚   â”‚   â”œâ”€â”€ Common/
-â”‚   â”‚   â”‚   â”œâ”€â”€ Behaviors/
-â”‚   â”‚   â”‚   â”‚   â””â”€â”€ ValidationBehavior.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ Exceptions/
-â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ NotFoundException.cs
-â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ BadRequestException.cs
-â”‚   â”‚   â”‚   â”‚   â””â”€â”€ ValidationException.cs
-â”‚   â”‚   â”‚   â””â”€â”€ Options/
-â”‚   â”‚   â”‚       â””â”€â”€ CachingOptions.cs
-â”‚   â”‚   â”œâ”€â”€ DTOs/
-â”‚   â”‚   â”‚   â”œâ”€â”€ CreateOrderRequest.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ CreateOrderResponse.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ OrderDetailsDto.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ OrderListItemDto.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardDto.cs
-â”‚   â”‚   â”œâ”€â”€ Features/
-â”‚   â”‚   â”‚   â””â”€â”€ Orders/
-â”‚   â”‚   â”‚       â”œâ”€â”€ CreateOrder/
-â”‚   â”‚   â”‚       â”œâ”€â”€ GetOrderById/
-â”‚   â”‚   â”‚       â”œâ”€â”€ GetOrders/
-â”‚   â”‚   â”‚       â””â”€â”€ GetDashboardOrders/
-â”‚   â”‚   â”œâ”€â”€ Interfaces/
-â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ IProductRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ ICustomerRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderDashboardRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ ICacheService.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderProcessingService.cs
-â”‚   â”‚   â”‚   â””â”€â”€ IOrderDashboardRefreshService.cs
-â”‚   â”‚   â””â”€â”€ DependencyInjection.cs
-â”‚   â”‚
-â”‚   â”œâ”€â”€ OrderFlow.Infrastructure/
-â”‚   â”‚   â”œâ”€â”€ BackgroundServices/
-â”‚   â”‚   â”‚   â”œâ”€â”€ BackgroundJobOptions.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderProcessingBackgroundService.cs
-â”‚   â”‚   â”œâ”€â”€ Caching/
-â”‚   â”‚   â”‚   â”œâ”€â”€ RedisOptions.cs
-â”‚   â”‚   â”‚   â””â”€â”€ RedisCacheService.cs
-â”‚   â”‚   â”œâ”€â”€ Persistence/
-â”‚   â”‚   â”‚   â”œâ”€â”€ Configurations/
-â”‚   â”‚   â”‚   â”œâ”€â”€ Migrations/
-â”‚   â”‚   â”‚   â”œâ”€â”€ Seed/
-â”‚   â”‚   â”‚   â”‚   â””â”€â”€ OrderFlowDbContextSeed.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderFlowDbContext.cs
-â”‚   â”‚   â”œâ”€â”€ ReadModels/
-â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardReadModel.cs
-â”‚   â”‚   â”œâ”€â”€ Repositories/
-â”‚   â”‚   â”‚   â”œâ”€â”€ CustomerRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ ProductRepository.cs
-â”‚   â”‚   â”‚   â”œâ”€â”€ OrderRepository.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardRepository.cs
-â”‚   â”‚   â”œâ”€â”€ Services/
-â”‚   â”‚   â”‚   â”œâ”€â”€ OrderProcessingService.cs
-â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardRefreshService.cs
-â”‚   â”‚   â””â”€â”€ DependencyInjection.cs
-â”‚   â”‚
-â”‚   â””â”€â”€ OrderFlow.API/
-â”‚       â”œâ”€â”€ Controllers/
-â”‚       â”‚   â”œâ”€â”€ OrdersController.cs
-â”‚       â”‚   â””â”€â”€ DashboardController.cs
-â”‚       â”œâ”€â”€ Middleware/
-â”‚       â”‚   â””â”€â”€ ExceptionHandlingMiddleware.cs
-â”‚       â”œâ”€â”€ appsettings.json
-â”‚       â”œâ”€â”€ appsettings.Development.json
-â”‚       â””â”€â”€ Program.cs
-â”‚
-â””â”€â”€ tests/
-    â”œâ”€â”€ OrderFlow.UnitTests/
-    â”‚   â”œâ”€â”€ Domain/
-    â”‚   â””â”€â”€ Application/
-    â””â”€â”€ OrderFlow.IntegrationTests/
-        â”œâ”€â”€ Infrastructure/
-        â”œâ”€â”€ Controllers/
-        â””â”€â”€ CustomWebApplicationFactory.cs
+├── OrderFlow.sln
+├── docker-compose.yml
+├── .gitignore
+├── .editorconfig
+├── LICENSE
+├── README.md
+│
+├── monitoring/
+│   ├── grafana/
+│   │   ├── dashboards/
+│   │   │   └── orderflow-dashboard.json
+│   │   └── provisioning/
+│   │       ├── dashboards/
+│   │       │   └── dashboards.yml
+│   │       └── datasources/
+│   │           └── datasources.yml
+│   └── prometheus/
+│       ├── alert_rules.yml
+│       └── prometheus.yml
+│
+├── src/
+│   ├── OrderFlow.Domain/
+│   │   ├── Common/
+│   │   ├── Entities/
+│   │   │   ├── Customer.cs
+│   │   │   ├── Product.cs
+│   │   │   ├── Order.cs
+│   │   │   └── OrderItem.cs
+│   │   ├── Enums/
+│   │   │   └── OrderStatus.cs
+│   │   └── Exceptions/
+│   │       └── DomainException.cs
+│   │
+│   ├── OrderFlow.Application/
+│   │   ├── Common/
+│   │   │   ├── Behaviors/
+│   │   │   │   └── ValidationBehavior.cs
+│   │   │   ├── Exceptions/
+│   │   │   │   ├── NotFoundException.cs
+│   │   │   │   ├── BadRequestException.cs
+│   │   │   │   └── ValidationException.cs
+│   │   │   └── Options/
+│   │   │       └── CachingOptions.cs
+│   │   ├── DTOs/
+│   │   │   ├── CreateOrderRequest.cs
+│   │   │   ├── CreateOrderResponse.cs
+│   │   │   ├── OrderDetailsDto.cs
+│   │   │   ├── OrderListItemDto.cs
+│   │   │   └── OrderDashboardDto.cs
+│   │   ├── Features/
+│   │   │   └── Orders/
+│   │   │       ├── CreateOrder/
+│   │   │       ├── GetOrderById/
+│   │   │       ├── GetOrders/
+│   │   │       └── GetDashboardOrders/
+│   │   ├── Interfaces/
+│   │   │   ├── IOrderRepository.cs
+│   │   │   ├── IProductRepository.cs
+│   │   │   ├── ICustomerRepository.cs
+│   │   │   ├── IOrderDashboardRepository.cs
+│   │   │   ├── ICacheService.cs
+│   │   │   ├── IOrderProcessingService.cs
+│   │   │   └── IOrderDashboardRefreshService.cs
+│   │   └── DependencyInjection.cs
+│   │
+│   ├── OrderFlow.Infrastructure/
+│   │   ├── BackgroundServices/
+│   │   │   ├── BackgroundJobOptions.cs
+│   │   │   └── OrderProcessingBackgroundService.cs
+│   │   ├── Caching/
+│   │   │   ├── RedisOptions.cs
+│   │   │   └── RedisCacheService.cs
+│   │   ├── Persistence/
+│   │   │   ├── Configurations/
+│   │   │   ├── Migrations/
+│   │   │   ├── Seed/
+│   │   │   │   └── OrderFlowDbContextSeed.cs
+│   │   │   └── OrderFlowDbContext.cs
+│   │   ├── ReadModels/
+│   │   │   └── OrderDashboardReadModel.cs
+│   │   ├── Repositories/
+│   │   │   ├── CustomerRepository.cs
+│   │   │   ├── ProductRepository.cs
+│   │   │   ├── OrderRepository.cs
+│   │   │   └── OrderDashboardRepository.cs
+│   │   ├── Services/
+│   │   │   ├── OrderProcessingService.cs
+│   │   │   └── OrderDashboardRefreshService.cs
+│   │   └── DependencyInjection.cs
+│   │
+│   └── OrderFlow.API/
+│       ├── Controllers/
+│       │   ├── OrdersController.cs
+│       │   └── DashboardController.cs
+│       ├── Middleware/
+│       │   └── ExceptionHandlingMiddleware.cs
+│       ├── Observability/
+│       │   ├── OrderFlowActivitySource.cs
+│       │   ├── OrderFlowMetrics.cs
+│       │   └── PendingOrdersMetrics.cs
+│       ├── appsettings.json
+│       ├── appsettings.Development.json
+│       └── Program.cs
+│
+├── submission/
+│   ├── VERIFICATION.md
+│   └── screenshots/
+│       ├── 01-grafana-dashboard.png
+│       ├── 02-jaeger-traces.png
+│       ├── 03-logs.png
+│       ├── 04-health-check.png
+│       └── 05-alerts.png
+│
+└── tests/
+    ├── OrderFlow.UnitTests/
+    │   ├── Domain/
+    │   └── Application/
+    └── OrderFlow.IntegrationTests/
+        ├── Infrastructure/
+        ├── Controllers/
+        └── CustomWebApplicationFactory.cs
 ```
 
 ---
