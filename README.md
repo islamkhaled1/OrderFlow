@@ -1,4 +1,4 @@
-# OrderFlow — Educational .NET 10 E-Commerce Backend
+# OrderFlow â€” Educational .NET 10 E-Commerce Backend
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 [![EF Core 10](https://img.shields.io/badge/EF%20Core-10.0-512BD4?style=flat-square)](https://docs.microsoft.com/ef/core/)
@@ -6,7 +6,7 @@
 
 **OrderFlow** is an educational, production-style e-commerce backend built with **.NET 10**, **C#**, **Entity Framework Core 10**, **SQL Server**, and **Redis**.
 
-The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logically evolves into advanced, high-performance patterns—such as **Clean Architecture**, **Vertical Slice Architecture**, **CQRS (Command Query Responsibility Segregation)**, **Redis Caching**, **Materialized Views (Read Models)**, and **Resilient Background Processing**—while remaining readable, clean, and practical for classroom walkthroughs and developer training.
+The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logically evolves into advanced, high-performance patternsâ€”such as **Clean Architecture**, **Vertical Slice Architecture**, **CQRS (Command Query Responsibility Segregation)**, **Redis Caching**, **Materialized Views (Read Models)**, and **Resilient Background Processing**â€”while remaining readable, clean, and practical for classroom walkthroughs and developer training.
 
 ---
 
@@ -87,21 +87,21 @@ Inside `OrderFlow.Application`, features are organized by use case rather than h
 
 ```text
 OrderFlow.Application/
-└── Features/
-    └── Orders/
-        ├── CreateOrder/
-        │   ├── CreateOrderCommand.cs
-        │   ├── CreateOrderHandler.cs
-        │   └── CreateOrderValidator.cs
-        ├── GetOrderById/
-        │   ├── GetOrderByIdQuery.cs
-        │   └── GetOrderByIdHandler.cs
-        ├── GetOrders/
-        │   ├── GetOrdersQuery.cs
-        │   └── GetOrdersHandler.cs
-        └── GetDashboardOrders/
-            ├── GetDashboardOrdersQuery.cs
-            └── GetDashboardOrdersHandler.cs
+â””â”€â”€ Features/
+    â””â”€â”€ Orders/
+        â”œâ”€â”€ CreateOrder/
+        â”‚   â”œâ”€â”€ CreateOrderCommand.cs
+        â”‚   â”œâ”€â”€ CreateOrderHandler.cs
+        â”‚   â””â”€â”€ CreateOrderValidator.cs
+        â”œâ”€â”€ GetOrderById/
+        â”‚   â”œâ”€â”€ GetOrderByIdQuery.cs
+        â”‚   â””â”€â”€ GetOrderByIdHandler.cs
+        â”œâ”€â”€ GetOrders/
+        â”‚   â”œâ”€â”€ GetOrdersQuery.cs
+        â”‚   â””â”€â”€ GetOrdersHandler.cs
+        â””â”€â”€ GetDashboardOrders/
+            â”œâ”€â”€ GetDashboardOrdersQuery.cs
+            â””â”€â”€ GetDashboardOrdersHandler.cs
 ```
 
 Each slice encapsulates everything required for that specific business operation: command/query, validation, and execution logic.
@@ -137,7 +137,7 @@ When an order item is created, it captures a **snapshot** of the product's name 
 
 ```text
 =========================================================
-READ MODEL ONLY — NOT THE SOURCE OF TRUTH
+READ MODEL ONLY â€” NOT THE SOURCE OF TRUTH
 =========================================================
 Columns:
 - OrderId (PK)
@@ -223,101 +223,101 @@ sequenceDiagram
 
 ```text
 OrderFlow/
-├── OrderFlow.sln
-├── docker-compose.yml
-├── .gitignore
-├── .editorconfig
-├── LICENSE
-├── README.md
-│
-├── src/
-│   ├── OrderFlow.Domain/
-│   │   ├── Common/
-│   │   ├── Entities/
-│   │   │   ├── Customer.cs
-│   │   │   ├── Product.cs
-│   │   │   ├── Order.cs
-│   │   │   └── OrderItem.cs
-│   │   ├── Enums/
-│   │   │   └── OrderStatus.cs
-│   │   └── Exceptions/
-│   │       └── DomainException.cs
-│   │
-│   ├── OrderFlow.Application/
-│   │   ├── Common/
-│   │   │   ├── Behaviors/
-│   │   │   │   └── ValidationBehavior.cs
-│   │   │   ├── Exceptions/
-│   │   │   │   ├── NotFoundException.cs
-│   │   │   │   ├── BadRequestException.cs
-│   │   │   │   └── ValidationException.cs
-│   │   │   └── Options/
-│   │   │       └── CachingOptions.cs
-│   │   ├── DTOs/
-│   │   │   ├── CreateOrderRequest.cs
-│   │   │   ├── CreateOrderResponse.cs
-│   │   │   ├── OrderDetailsDto.cs
-│   │   │   ├── OrderListItemDto.cs
-│   │   │   └── OrderDashboardDto.cs
-│   │   ├── Features/
-│   │   │   └── Orders/
-│   │   │       ├── CreateOrder/
-│   │   │       ├── GetOrderById/
-│   │   │       ├── GetOrders/
-│   │   │       └── GetDashboardOrders/
-│   │   ├── Interfaces/
-│   │   │   ├── IOrderRepository.cs
-│   │   │   ├── IProductRepository.cs
-│   │   │   ├── ICustomerRepository.cs
-│   │   │   ├── IOrderDashboardRepository.cs
-│   │   │   ├── ICacheService.cs
-│   │   │   ├── IOrderProcessingService.cs
-│   │   │   └── IOrderDashboardRefreshService.cs
-│   │   └── DependencyInjection.cs
-│   │
-│   ├── OrderFlow.Infrastructure/
-│   │   ├── BackgroundServices/
-│   │   │   ├── BackgroundJobOptions.cs
-│   │   │   └── OrderProcessingBackgroundService.cs
-│   │   ├── Caching/
-│   │   │   ├── RedisOptions.cs
-│   │   │   └── RedisCacheService.cs
-│   │   ├── Persistence/
-│   │   │   ├── Configurations/
-│   │   │   ├── Migrations/
-│   │   │   ├── Seed/
-│   │   │   │   └── OrderFlowDbContextSeed.cs
-│   │   │   └── OrderFlowDbContext.cs
-│   │   ├── ReadModels/
-│   │   │   └── OrderDashboardReadModel.cs
-│   │   ├── Repositories/
-│   │   │   ├── CustomerRepository.cs
-│   │   │   ├── ProductRepository.cs
-│   │   │   ├── OrderRepository.cs
-│   │   │   └── OrderDashboardRepository.cs
-│   │   ├── Services/
-│   │   │   ├── OrderProcessingService.cs
-│   │   │   └── OrderDashboardRefreshService.cs
-│   │   └── DependencyInjection.cs
-│   │
-│   └── OrderFlow.API/
-│       ├── Controllers/
-│       │   ├── OrdersController.cs
-│       │   └── DashboardController.cs
-│       ├── Middleware/
-│       │   └── ExceptionHandlingMiddleware.cs
-│       ├── appsettings.json
-│       ├── appsettings.Development.json
-│       └── Program.cs
-│
-└── tests/
-    ├── OrderFlow.UnitTests/
-    │   ├── Domain/
-    │   └── Application/
-    └── OrderFlow.IntegrationTests/
-        ├── Infrastructure/
-        ├── Controllers/
-        └── CustomWebApplicationFactory.cs
+â”œâ”€â”€ OrderFlow.sln
+â”œâ”€â”€ docker-compose.yml
+â”œâ”€â”€ .gitignore
+â”œâ”€â”€ .editorconfig
+â”œâ”€â”€ LICENSE
+â”œâ”€â”€ README.md
+â”‚
+â”œâ”€â”€ src/
+â”‚   â”œâ”€â”€ OrderFlow.Domain/
+â”‚   â”‚   â”œâ”€â”€ Common/
+â”‚   â”‚   â”œâ”€â”€ Entities/
+â”‚   â”‚   â”‚   â”œâ”€â”€ Customer.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ Product.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ Order.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderItem.cs
+â”‚   â”‚   â”œâ”€â”€ Enums/
+â”‚   â”‚   â”‚   â””â”€â”€ OrderStatus.cs
+â”‚   â”‚   â””â”€â”€ Exceptions/
+â”‚   â”‚       â””â”€â”€ DomainException.cs
+â”‚   â”‚
+â”‚   â”œâ”€â”€ OrderFlow.Application/
+â”‚   â”‚   â”œâ”€â”€ Common/
+â”‚   â”‚   â”‚   â”œâ”€â”€ Behaviors/
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ ValidationBehavior.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ Exceptions/
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ NotFoundException.cs
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ BadRequestException.cs
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ ValidationException.cs
+â”‚   â”‚   â”‚   â””â”€â”€ Options/
+â”‚   â”‚   â”‚       â””â”€â”€ CachingOptions.cs
+â”‚   â”‚   â”œâ”€â”€ DTOs/
+â”‚   â”‚   â”‚   â”œâ”€â”€ CreateOrderRequest.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ CreateOrderResponse.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ OrderDetailsDto.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ OrderListItemDto.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardDto.cs
+â”‚   â”‚   â”œâ”€â”€ Features/
+â”‚   â”‚   â”‚   â””â”€â”€ Orders/
+â”‚   â”‚   â”‚       â”œâ”€â”€ CreateOrder/
+â”‚   â”‚   â”‚       â”œâ”€â”€ GetOrderById/
+â”‚   â”‚   â”‚       â”œâ”€â”€ GetOrders/
+â”‚   â”‚   â”‚       â””â”€â”€ GetDashboardOrders/
+â”‚   â”‚   â”œâ”€â”€ Interfaces/
+â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ IProductRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ ICustomerRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderDashboardRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ ICacheService.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ IOrderProcessingService.cs
+â”‚   â”‚   â”‚   â””â”€â”€ IOrderDashboardRefreshService.cs
+â”‚   â”‚   â””â”€â”€ DependencyInjection.cs
+â”‚   â”‚
+â”‚   â”œâ”€â”€ OrderFlow.Infrastructure/
+â”‚   â”‚   â”œâ”€â”€ BackgroundServices/
+â”‚   â”‚   â”‚   â”œâ”€â”€ BackgroundJobOptions.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderProcessingBackgroundService.cs
+â”‚   â”‚   â”œâ”€â”€ Caching/
+â”‚   â”‚   â”‚   â”œâ”€â”€ RedisOptions.cs
+â”‚   â”‚   â”‚   â””â”€â”€ RedisCacheService.cs
+â”‚   â”‚   â”œâ”€â”€ Persistence/
+â”‚   â”‚   â”‚   â”œâ”€â”€ Configurations/
+â”‚   â”‚   â”‚   â”œâ”€â”€ Migrations/
+â”‚   â”‚   â”‚   â”œâ”€â”€ Seed/
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ OrderFlowDbContextSeed.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderFlowDbContext.cs
+â”‚   â”‚   â”œâ”€â”€ ReadModels/
+â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardReadModel.cs
+â”‚   â”‚   â”œâ”€â”€ Repositories/
+â”‚   â”‚   â”‚   â”œâ”€â”€ CustomerRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ ProductRepository.cs
+â”‚   â”‚   â”‚   â”œâ”€â”€ OrderRepository.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardRepository.cs
+â”‚   â”‚   â”œâ”€â”€ Services/
+â”‚   â”‚   â”‚   â”œâ”€â”€ OrderProcessingService.cs
+â”‚   â”‚   â”‚   â””â”€â”€ OrderDashboardRefreshService.cs
+â”‚   â”‚   â””â”€â”€ DependencyInjection.cs
+â”‚   â”‚
+â”‚   â””â”€â”€ OrderFlow.API/
+â”‚       â”œâ”€â”€ Controllers/
+â”‚       â”‚   â”œâ”€â”€ OrdersController.cs
+â”‚       â”‚   â””â”€â”€ DashboardController.cs
+â”‚       â”œâ”€â”€ Middleware/
+â”‚       â”‚   â””â”€â”€ ExceptionHandlingMiddleware.cs
+â”‚       â”œâ”€â”€ appsettings.json
+â”‚       â”œâ”€â”€ appsettings.Development.json
+â”‚       â””â”€â”€ Program.cs
+â”‚
+â””â”€â”€ tests/
+    â”œâ”€â”€ OrderFlow.UnitTests/
+    â”‚   â”œâ”€â”€ Domain/
+    â”‚   â””â”€â”€ Application/
+    â””â”€â”€ OrderFlow.IntegrationTests/
+        â”œâ”€â”€ Infrastructure/
+        â”œâ”€â”€ Controllers/
+        â””â”€â”€ CustomWebApplicationFactory.cs
 ```
 
 ---

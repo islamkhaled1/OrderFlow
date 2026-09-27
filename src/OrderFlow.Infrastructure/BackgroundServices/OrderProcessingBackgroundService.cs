@@ -1,3 +1,4 @@
+﻿using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -22,15 +23,29 @@ public class OrderProcessingBackgroundService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<BackgroundJobOptions> _options;
     private readonly ILogger<OrderProcessingBackgroundService> _logger;
+    private readonly Counter<long> _workerCyclesCounter;
+    private readonly Counter<long> _workerProcessedCounter;
 
     public OrderProcessingBackgroundService(
         IServiceScopeFactory scopeFactory,
         IOptions<BackgroundJobOptions> options,
-        ILogger<OrderProcessingBackgroundService> logger)
+        ILogger<OrderProcessingBackgroundService> logger,
+        IMeterFactory meterFactory)
     {
         _scopeFactory = scopeFactory;
         _options = options;
         _logger = logger;
+
+        // Use the same meter name as OrderFlowMetrics for consistent Prometheus export
+        var meter = meterFactory.Create("OrderFlow");
+        _workerCyclesCounter = meter.CreateCounter<long>(
+            "orderflow.worker.cycles",
+            unit: "{cycles}",
+            description: "Total number of background worker processing cycles");
+        _workerProcessedCounter = meter.CreateCounter<long>(
+            "orderflow.worker.orders_processed",
+            unit: "{orders}",
+            description: "Total number of orders processed by the background worker");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -56,6 +71,7 @@ public class OrderProcessingBackgroundService : BackgroundService
     private async Task ProcessCycleAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Background cycle triggered: Starting pending order processing and dashboard refresh.");
+        _workerCyclesCounter.Add(1);
 
         try
         {
@@ -67,6 +83,13 @@ public class OrderProcessingBackgroundService : BackgroundService
 
             // Step 1: Process pending orders (and invalidate their Redis cache entries)
             var processedOrderIds = await orderProcessingService.ProcessPendingOrdersAsync(cancellationToken);
+
+            if (processedOrderIds.Count > 0)
+            {
+                _workerProcessedCounter.Add(processedOrderIds.Count);
+                _logger.LogInformation("Background worker processed {Count} pending order(s): {OrderIds}",
+                    processedOrderIds.Count, string.Join(", ", processedOrderIds));
+            }
 
             // Step 2: Refresh the Materialized View read model
             await dashboardRefreshService.RefreshDashboardAsync(cancellationToken);

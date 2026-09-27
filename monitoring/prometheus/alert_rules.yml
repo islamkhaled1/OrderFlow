@@ -1,0 +1,20 @@
+﻿groups:
+  - name: orderflow_alerts
+    rules:
+      - alert: HighErrorRate
+        expr: sum(rate(orderflow_http_errors_total[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate detected"
+          description: "The OrderFlow API is experiencing more than 0.5 errors per second over the last 5 minutes, indicating an unusually high rate of failures."
+
+      - alert: HighPendingOrders
+        expr: orderflow_orders_pending > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of pending orders"
+          description: "There are more than 50 pending orders for over 5 minutes, which may indicate the Background Worker is not processing orders normally."

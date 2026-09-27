@@ -1,5 +1,6 @@
-using MediatR;
+﻿using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using OrderFlow.API.Observability;
 using OrderFlow.Application.DTOs;
 using OrderFlow.Application.Features.Orders.CreateOrder;
 using OrderFlow.Application.Features.Orders.GetOrderById;
@@ -8,10 +9,8 @@ using OrderFlow.Application.Features.Orders.GetOrders;
 namespace OrderFlow.API.Controllers;
 
 /// <summary>
-/// Orders endpoint controller.
-/// 
-/// ARCHITECTURAL PRINCIPLE:
-/// Controllers must remain thin. All business logic, validation,
+/// REST API endpoints for Order operations.
+/// The controller is deliberately thin: validation, business rules,
 /// data access, and caching decisions are encapsulated inside
 /// MediatR commands, queries, and domain models.
 /// </summary>
@@ -21,10 +20,14 @@ namespace OrderFlow.API.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly ILogger<OrdersController> _logger;
+    private readonly OrderFlowMetrics _metrics;
 
-    public OrdersController(IMediator mediator)
+    public OrdersController(IMediator mediator, ILogger<OrdersController> logger, OrderFlowMetrics metrics)
     {
         _mediator = mediator;
+        _logger = logger;
+        _metrics = metrics;
     }
 
     /// <summary>
@@ -47,8 +50,24 @@ public class OrdersController : ControllerBase
         [FromBody] CreateOrderRequest request,
         CancellationToken cancellationToken)
     {
+        using var activity = OrderFlowActivitySource.Instance.StartActivity("CreateOrder");
+        activity?.SetTag("order.customer_id", request.CustomerId);
+        activity?.SetTag("order.items_count", request.Items.Count);
+
+        _logger.LogInformation("Creating order for CustomerId {CustomerId} with {ItemCount} items",
+            request.CustomerId, request.Items.Count);
+
         var command = new CreateOrderCommand(request.CustomerId, request.Items);
         var response = await _mediator.Send(command, cancellationToken);
+
+        activity?.SetTag("order.id", response.OrderId);
+        activity?.SetTag("order.total", response.Total);
+        activity?.SetTag("order.status", response.Status);
+
+        _metrics.RecordOrderCreated();
+
+        _logger.LogInformation("Order {OrderId} created successfully. Total: {Total}, Status: {Status}",
+            response.OrderId, response.Total, response.Status);
 
         return CreatedAtAction(nameof(GetById), new { id = response.OrderId }, response);
     }
@@ -73,8 +92,18 @@ public class OrdersController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
+        using var activity = OrderFlowActivitySource.Instance.StartActivity("GetOrderById");
+        activity?.SetTag("order.id", id);
+
+        _logger.LogInformation("Retrieving order {OrderId}", id);
+
         var query = new GetOrderByIdQuery(id);
         var response = await _mediator.Send(query, cancellationToken);
+
+        activity?.SetTag("order.status", response.Status);
+
+        _logger.LogInformation("Order {OrderId} retrieved successfully. Status: {Status}",
+            id, response.Status);
 
         return Ok(response);
     }
@@ -92,8 +121,16 @@ public class OrdersController : ControllerBase
     [ProducesResponseType(typeof(List<OrderListItemDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<List<OrderListItemDto>>> GetAll(CancellationToken cancellationToken)
     {
+        using var activity = OrderFlowActivitySource.Instance.StartActivity("GetOrders");
+
+        _logger.LogInformation("Retrieving all orders");
+
         var query = new GetOrdersQuery();
         var response = await _mediator.Send(query, cancellationToken);
+
+        activity?.SetTag("orders.count", response.Count);
+
+        _logger.LogInformation("Retrieved {OrderCount} orders", response.Count);
 
         return Ok(response);
     }
