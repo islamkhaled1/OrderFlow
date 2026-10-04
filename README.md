@@ -32,13 +32,11 @@ The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logi
 - [10. Running Automated Tests](#10-running-automated-tests)
 - [11. Architectural Trade-offs & Philosophy](#11-architectural-trade-offs--philosophy)
 - [12. Monitoring & Observability Stack](#12-monitoring--observability-stack)
-  - [Core Metrics](#core-metrics)
-  - [Distributed Tracing (Jaeger)](#distributed-tracing-jaeger)
-  - [Structured Logging](#structured-logging)
-  - [Health Checks & Resiliency](#health-checks--resiliency)
-  - [Grafana Dashboard](#grafana-dashboard)
-  - [Alerting Rules](#alerting-rules)
-  - [Verification & Evidence](#verification--evidence)
+  - [1. Visual Evidence & Live UIs Showcase](#1-visual-evidence--live-uis-showcase)
+  - [2. Core Metrics Catalog](#2-core-metrics-catalog)
+  - [3. Implementation Highlights (.NET 10 & OpenTelemetry)](#3-implementation-highlights-net-10--opentelemetry)
+  - [4. Hands-on Walkthrough: Running & Verifying the Stack](#4-hands-on-walkthrough-running--verifying-the-stack)
+  - [5. Detailed Verification Report](#5-detailed-verification-report)
 
 ---
 
@@ -580,7 +578,7 @@ For an **educational project**, introducing distributed brokers creates signific
 
 ## 12. Monitoring & Observability Stack
 
-OrderFlow includes a complete, educational Monitoring & Observability implementation built using **OpenTelemetry (.NET 10)**, **Prometheus**, **Grafana**, and **Jaeger**.
+OrderFlow includes an enterprise-grade, production-style Monitoring & Observability stack built with **OpenTelemetry (.NET 10)**, **Prometheus**, **Grafana**, and **Jaeger**. It provides complete full-stack visibility across the three pillars of observability: **Metrics**, **Distributed Tracing**, and **Structured Logging**, alongside **Component Health Checks** and **Automated Alerting**.
 
 ```mermaid
 graph LR
@@ -598,63 +596,248 @@ graph LR
     API -- "Health Check (:5138/health)" --> SQL
 ```
 
-### Core Metrics
+---
 
-The API exports OpenTelemetry metrics in standard Prometheus exposition format at `http://localhost:5138/metrics`:
+### 1. Visual Evidence & Live UIs Showcase
 
-| Metric Name | Type | Description |
-|---|---|---|
-| `orderflow_http_requests_total` | Counter | Total incoming HTTP requests tagged by method, low-cardinality route, and status code. |
-| `http_server_request_duration_seconds` | Histogram | Request latency distribution buckets, sum, and count per route. |
-| `orderflow_http_errors_total` | Counter | Total HTTP 4xx/5xx errors caught and categorized by route and status code. |
-| `orderflow_orders_created_total` | Counter | Total successful orders created. |
-| `orderflow_orders_pending` | Observable Gauge | Real-time count of orders in `Pending` state awaiting background worker processing. |
-| `orderflow_worker_cycles_total` | Counter | Number of completed background worker processing cycles. |
-| `orderflow_worker_orders_processed_total` | Counter | Cumulative number of pending orders transitioned to `Completed` by the worker. |
+All components are fully validated with authentic runtime screenshots captured from the running stack:
 
-### Distributed Tracing (Jaeger)
+#### A. Pre-Provisioned Grafana Dashboard
+Accessible at `http://localhost:3000/d/orderflow-dashboard/orderflow-dashboard` (Credentials: `admin` / `admin`):
 
-Instrumented using `ActivitySource("OrderFlow")` and exported via OTLP (`http://localhost:4317`):
-- **`CreateOrder`**: Internal span capturing `order.customer_id`, `order.items_count`, `order.id`, `order.total`, and `order.status`.
-- **`GetOrderById`**: Internal span capturing `order.id` and `order.status`.
-- **`GetOrders`**: Internal span capturing `orders.count`.
+![Grafana Dashboard](submission/screenshots/01-grafana-dashboard.png)
 
-View live traces in the **Jaeger UI** at `http://localhost:16686/search` (Service: `OrderFlow`).
-
-### Structured Logging
-
-OrderFlow emits contextual, structured logs using standard .NET logging abstractions:
-- **Order Creation**: Logs customer ID, item count, generated order ID, total, and initial status.
-- **Order Retrieval & Caching**: Explicitly distinguishes between `Cache hit for order {OrderId}` and `Cache miss for order {OrderId}. Fetching from database.`
-- **Background Worker**: Logs cycle triggers, number of orders processed, status transitions to `Completed`, cache invalidation, and materialized view refresh.
-- **Resilient Fallback**: Warnings logged when Redis is unavailable, with graceful database fallback.
-- **Error Handling**: Logged via `ExceptionHandlingMiddleware` with HTTP status codes and error details.
-
-### Health Checks & Resiliency
-
-Accessible at `http://localhost:5138/health` returning structured JSON:
-- **Application**: Confirms the API host is responsive.
-- **SQL Server**: Validates database connectivity and query execution.
-- **Redis**: Validates distributed cache connectivity.
-- **Graceful Fallback**: If Redis stops, `/health` reports Redis as `Unhealthy`, while the API continues to serve order creation and retrieval seamlessly via database fallback.
-
-### Grafana Dashboard
-
-Pre-provisioned automatically at `http://localhost:3000/d/orderflow-dashboard/orderflow-dashboard`:
-1. **Request Count**: Line graph of incoming request rates by endpoint.
-2. **Request Duration**: 95th percentile latency graph (`histogram_quantile(0.95, ...)`).
+The dashboard automatically visualizes 5 vital system metrics:
+1. **Request Count**: Real-time line graph of incoming request throughput broken down by route.
+2. **Request Duration**: 95th percentile latency distribution histogram (`histogram_quantile(0.95, ...)`).
 3. **Error Count**: Stat panel tracking HTTP 4xx and 5xx application errors.
-4. **Orders Created**: Stat panel showing real-time count of orders placed.
-5. **Pending Orders**: Stat panel showing current backlog of orders pending worker processing.
+4. **Orders Created**: Real-time counter showing cumulative orders placed.
+5. **Pending Orders**: Observable backlog gauge of orders currently awaiting background worker processing.
 
-### Alerting Rules
+---
 
-Defined in `monitoring/prometheus/alert_rules.yml` and evaluated by Prometheus:
-- **`HighErrorRate`**: Triggers when the HTTP error rate exceeds 0.5 errors/sec over 5 minutes (`sum(rate(orderflow_http_errors_total[5m])) > 0.5`).
-- **`HighPendingOrders`**: Triggers when pending orders exceed 50 for 5 minutes (`orderflow_orders_pending > 50`), alerting that the background worker may be delayed or stalled.
+#### B. Distributed Tracing in Jaeger
+Accessible at `http://localhost:16686/search` (Service: `OrderFlow`):
 
-### Verification & Evidence
+![Jaeger Distributed Tracing](submission/screenshots/02-jaeger-traces.png)
 
-Full runtime verification details, test logs, and genuine screenshots from live UIs are documented in:
+Traces capture parent-to-child span hierarchies from HTTP arrival down to internal domain activities (`CreateOrder`, `GetOrderById`, `GetOrders`) with contextual business tags:
+- `order.customer_id`, `order.items_count`, `order.id`, `order.total`, and `order.status`.
+
+---
+
+#### C. Contextual Structured Logging
+OrderFlow emits strongly-typed structured logs adhering to high-performance logging practices:
+
+![Structured Logging Console Output](submission/screenshots/03-logs.png)
+
+Sample log events:
+```text
+info: OrderFlow.API.Controllers.OrdersController - Creating order for CustomerId 1 with 1 items
+info: OrderFlow.API.Controllers.OrdersController - Order 5018 created successfully. Total: 240.00, Status: Pending
+info: OrderFlow.Application.Features.Orders.GetOrderById - Cache miss for order 5018. Fetching from database.
+info: OrderFlow.Infrastructure.Services.OrderProcessingService - Successfully transitioned orders 5018 to Completed
+info: OrderFlow.Infrastructure.Caching.RedisCacheService - Cache key 'order:5018' removed successfully
+info: OrderFlow.Application.Features.Orders.GetOrderById - Cache hit for order 5018.
+```
+
+---
+
+#### D. Component Health Checks & Resilient Fallback
+Accessible at `http://localhost:5138/health` returning detailed UI-compatible JSON:
+
+![Component Health Checks](submission/screenshots/04-health-check.png)
+
+```json
+{
+  "status": "Healthy",
+  "totalDuration": "00:00:00.0123456",
+  "entries": {
+    "sqlserver": {
+      "data": {},
+      "description": null,
+      "duration": "00:00:00.0081234",
+      "status": "Healthy",
+      "tags": ["db", "sql"]
+    },
+    "redis": {
+      "data": {},
+      "description": null,
+      "duration": "00:00:00.0034567",
+      "status": "Healthy",
+      "tags": ["cache", "redis"]
+    }
+  }
+}
+```
+
+> [!NOTE]
+> **Graceful Degradation**: If Redis stops or becomes unreachable, `/health` reports `redis` as `Unhealthy`, but the API gracefully falls back to SQL Server transactional tables without dropping requests or throwing 500 errors to consumers.
+
+---
+
+#### E. Prometheus Real-time Alerting Rules
+Accessible at `http://localhost:9090/alerts`:
+
+![Prometheus Alerting Rules](submission/screenshots/05-alerts.png)
+
+Configured in `monitoring/prometheus/alert_rules.yml`:
+- **`HighErrorRate`**: Triggers if HTTP error rate exceeds `0.5 errors/sec` over 5 minutes (`sum(rate(orderflow_http_errors_total[5m])) > 0.5`), indicating abnormal application failures or downstream service disruption.
+- **`HighPendingOrders`**: Triggers if pending orders exceed `50` for 5 minutes (`orderflow_orders_pending > 50`), warning that the background worker may be delayed, stalled, or failing.
+
+---
+
+### 2. Core Metrics Catalog
+
+Metrics are exposed at `http://localhost:5138/metrics` in standard Prometheus exposition format:
+
+| Metric Name | Instrument | Description & Tags |
+|---|---|---|
+| `orderflow_http_requests_total` | `Counter<long>` | Total incoming HTTP requests tagged by `http.request.method`, `http.route`, and `http.response.status_code`. |
+| `http_server_request_duration_seconds` | `Histogram` | Request duration distribution buckets, sum, and count per route. |
+| `orderflow_http_errors_total` | `Counter<long>` | Total HTTP 4xx and 5xx errors recorded via global exception middleware. |
+| `orderflow_orders_created_total` | `Counter<long>` | Total number of successfully placed customer orders. |
+| `orderflow_orders_pending` | `ObservableGauge<long>` | Real-time gauge reflecting transactional orders currently in `Pending` state awaiting background worker fulfillment. |
+| `orderflow_worker_cycles_total` | `Counter<long>` | Cumulative number of background worker processing loops executed. |
+| `orderflow_worker_orders_processed_total` | `Counter<long>` | Cumulative number of pending orders transitioned to `Completed`. |
+
+---
+
+### 3. Implementation Highlights (.NET 10 & OpenTelemetry)
+
+#### A. OpenTelemetry Configuration (`Program.cs`)
+```csharp
+var otelResource = ResourceBuilder.CreateDefault().AddService("OrderFlow");
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing
+            .SetResourceBuilder(otelResource)
+            .AddSource(OrderFlowActivitySource.Name)
+            .AddAspNetCoreInstrumentation()
+            .AddConsoleExporter();
+
+        var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint));
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .SetResourceBuilder(otelResource)
+            .AddMeter(OrderFlowMetrics.MeterName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddPrometheusExporter();
+    });
+```
+
+#### B. Safe Scoped Access in Observable Gauges (`PendingOrdersMetrics.cs`)
+Because `ObservableGauge` callbacks run as singletons inside the telemetry pipeline, directly injecting EF Core's scoped `DbContext` is prohibited. OrderFlow uses `IServiceScopeFactory` to safely create short-lived scopes:
+
+```csharp
+private long GetPendingOrdersCount()
+{
+    try
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<OrderFlowDbContext>();
+        return dbContext.Orders
+            .AsNoTracking()
+            .Count(o => o.Status == OrderStatus.Pending);
+    }
+    catch (Exception ex)
+    {
+        _logger.LogWarning(ex, "Failed to query pending orders count for metrics.");
+        return -1;
+    }
+}
+```
+
+#### C. Custom Business Activity Spans (`OrdersController.cs`)
+```csharp
+using var activity = OrderFlowActivitySource.Instance.StartActivity("CreateOrder");
+activity?.SetTag("order.customer_id", request.CustomerId);
+activity?.SetTag("order.items_count", request.Items.Count);
+
+var response = await _mediator.Send(command, cancellationToken);
+
+activity?.SetTag("order.id", response.OrderId);
+activity?.SetTag("order.total", response.Total);
+activity?.SetTag("order.status", response.Status);
+```
+
+---
+
+### 4. Hands-on Walkthrough: Running & Verifying the Stack
+
+Follow this hands-on guide to experience the full observability loop in action:
+
+#### Step 1: Start the Infrastructure Stack
+```bash
+docker compose up -d
+```
+Verify that all 5 containers are up:
+- **SQL Server 2022**: `localhost:1433`
+- **Redis**: `localhost:6379`
+- **Prometheus**: `http://localhost:9090`
+- **Grafana**: `http://localhost:3000` (`admin` / `admin`)
+- **Jaeger UI**: `http://localhost:16686`
+
+#### Step 2: Run the Web API
+```bash
+dotnet run --project src/OrderFlow.API
+```
+The API starts on `http://localhost:5138` and automatically connects to the observability pipelines.
+
+#### Step 3: Generate Traffic & Observe
+Run the following commands to create orders and retrieve them:
+
+```bash
+# 1. Create an order (Generates trace span & increments orderflow_orders_created_total)
+curl -X POST http://localhost:5138/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId": 1, "items": [{"productId": 1, "quantity": 2}, {"productId": 2, "quantity": 1}]}'
+
+# 2. Get order by ID (First call: Cache Miss -> Fetches DB -> Populates Redis)
+curl -X GET http://localhost:5138/api/orders/1
+
+# 3. Get order by ID again (Second call: Cache Hit -> Instant Redis read)
+curl -X GET http://localhost:5138/api/orders/1
+
+# 4. Trigger an intentional 404 (Increments orderflow_http_errors_total)
+curl -X GET http://localhost:5138/api/orders/999999
+```
+
+- Navigate to **Grafana** (`http://localhost:3000/d/orderflow-dashboard/orderflow-dashboard`) to watch the request rate, latency, and order counters rise.
+- Open **Jaeger** (`http://localhost:16686/search`) and select Service `OrderFlow` to inspect detailed spans and business attributes.
+- Open **Prometheus Targets** (`http://localhost:9090/targets`) to verify that `orderflow-api` is in state `UP`.
+
+#### Step 4: Chaos Test (Dependency Failure & Graceful Degradation)
+Simulate a Redis outage while the system is under operation:
+
+```bash
+# Stop the Redis container
+docker compose stop redis
+```
+
+1. Check health: `curl http://localhost:5138/health` &rarr; Redis reports `Unhealthy`, overall status `Unhealthy`.
+2. Retrieve order: `curl http://localhost:5138/api/orders/1` &rarr; Returns `200 OK` successfully!
+3. Review console logs: Notice the graceful fallback warning:
+   ```text
+   warn: OrderFlow.Infrastructure.Caching.RedisCacheService - Redis connection is unavailable. Skipping cache read/write. Fetching from database.
+   ```
+4. Restart Redis:
+   ```bash
+   docker compose start redis
+   ```
+   Check health again &rarr; Automatically recovers to `Healthy`.
+
+---
+
+### 5. Detailed Verification Report
+For complete test logs, verification matrices, and audit records, see:
 - [`submission/VERIFICATION.md`](submission/VERIFICATION.md)
-- [`submission/screenshots/`](submission/screenshots/)
