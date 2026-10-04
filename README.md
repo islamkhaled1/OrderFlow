@@ -1,4 +1,4 @@
-# OrderFlow â€” Educational .NET 10 E-Commerce Backend
+# OrderFlow — Educational .NET 10 E-Commerce Backend
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
 [![EF Core 10](https://img.shields.io/badge/EF%20Core-10.0-512BD4?style=flat-square)](https://docs.microsoft.com/ef/core/)
@@ -6,7 +6,7 @@
 
 **OrderFlow** is an educational, production-style e-commerce backend built with **.NET 10**, **C#**, **Entity Framework Core 10**, **SQL Server**, and **Redis**.
 
-The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logically evolves into advanced, high-performance patternsâ€”such as **Clean Architecture**, **Vertical Slice Architecture**, **CQRS (Command Query Responsibility Segregation)**, **Redis Caching**, **Materialized Views (Read Models)**, and **Resilient Background Processing**â€”while remaining readable, clean, and practical for classroom walkthroughs and developer training.
+The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logically evolves into advanced, high-performance patterns — such as **Clean Architecture**, **Vertical Slice Architecture**, **CQRS (Command Query Responsibility Segregation)**, **Redis Caching**, **Materialized Views (Read Models)**, and **Resilient Background Processing** — while remaining readable, clean, and practical for classroom walkthroughs and developer training.
 
 ---
 
@@ -95,21 +95,21 @@ Inside `OrderFlow.Application`, features are organized by use case rather than h
 
 ```text
 OrderFlow.Application/
-â””â”€â”€ Features/
-    â””â”€â”€ Orders/
-        â”œâ”€â”€ CreateOrder/
-        â”‚   â”œâ”€â”€ CreateOrderCommand.cs
-        â”‚   â”œâ”€â”€ CreateOrderHandler.cs
-        â”‚   â””â”€â”€ CreateOrderValidator.cs
-        â”œâ”€â”€ GetOrderById/
-        â”‚   â”œâ”€â”€ GetOrderByIdQuery.cs
-        â”‚   â””â”€â”€ GetOrderByIdHandler.cs
-        â”œâ”€â”€ GetOrders/
-        â”‚   â”œâ”€â”€ GetOrdersQuery.cs
-        â”‚   â””â”€â”€ GetOrdersHandler.cs
-        â””â”€â”€ GetDashboardOrders/
-            â”œâ”€â”€ GetDashboardOrdersQuery.cs
-            â””â”€â”€ GetDashboardOrdersHandler.cs
+└── Features/
+    └── Orders/
+        ├── CreateOrder/
+        │   ├── CreateOrderCommand.cs
+        │   ├── CreateOrderHandler.cs
+        │   └── CreateOrderValidator.cs
+        ├── GetOrderById/
+        │   ├── GetOrderByIdQuery.cs
+        │   └── GetOrderByIdHandler.cs
+        ├── GetOrders/
+        │   ├── GetOrdersQuery.cs
+        │   └── GetOrdersHandler.cs
+        └── GetDashboardOrders/
+            ├── GetDashboardOrdersQuery.cs
+            └── GetDashboardOrdersHandler.cs
 ```
 
 Each slice encapsulates everything required for that specific business operation: command/query, validation, and execution logic.
@@ -145,7 +145,7 @@ When an order item is created, it captures a **snapshot** of the product's name 
 
 ```text
 =========================================================
-READ MODEL ONLY â€” NOT THE SOURCE OF TRUTH
+READ MODEL ONLY — NOT THE SOURCE OF TRUTH
 =========================================================
 Columns:
 - OrderId (PK)
