@@ -8,9 +8,15 @@ public class Order
     public int Id { get; set; }
     public int CustomerId { get; set; }
     public Customer? Customer { get; set; }
-    public OrderStatus Status { get; set; }
+    public OrderStatus Status { get; private set; }
     public DateTime CreatedAt { get; set; }
-    public decimal Total { get; set; }
+    public decimal Total { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
+    public DateTime? CancelledAt { get; private set; }
+    public string? CancellationReason { get; private set; }
+
+    /// <summary>SQL Server rowversion used for optimistic concurrency on state transitions.</summary>
+    public byte[] RowVersion { get; private set; } = Array.Empty<byte>();
 
     private readonly List<OrderItem> _items = new();
     public IReadOnlyCollection<OrderItem> Items => _items.AsReadOnly();
@@ -43,14 +49,33 @@ public class Order
         return order;
     }
 
+    public static bool CanTransition(OrderStatus from, OrderStatus to) =>
+        from == OrderStatus.Pending && (to == OrderStatus.Completed || to == OrderStatus.Cancelled);
+
     public void MarkAsCompleted()
     {
-        if (Status != OrderStatus.Pending)
-        {
-            throw new DomainException($"Order {Id} is already '{Status}' and cannot be transitioned to 'Completed'.");
-        }
+        if (!CanTransition(Status, OrderStatus.Completed))
+            throw new InvalidOrderStateTransitionException(Id, Status, OrderStatus.Completed);
 
         Status = OrderStatus.Completed;
+        CompletedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Cancels a pending order. The caller is responsible for releasing the reserved stock in the same
+    /// transaction; this method is the single guard that makes the release happen at most once.
+    /// </summary>
+    public void Cancel(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new DomainException("A cancellation reason is required.");
+
+        if (!CanTransition(Status, OrderStatus.Cancelled))
+            throw new InvalidOrderStateTransitionException(Id, Status, OrderStatus.Cancelled);
+
+        Status = OrderStatus.Cancelled;
+        CancelledAt = DateTime.UtcNow;
+        CancellationReason = reason.Trim();
     }
 
     private void CalculateTotal()

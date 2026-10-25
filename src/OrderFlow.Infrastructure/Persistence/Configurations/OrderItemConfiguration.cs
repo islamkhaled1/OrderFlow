@@ -8,7 +8,11 @@ public class OrderItemConfiguration : IEntityTypeConfiguration<OrderItem>
 {
     public void Configure(EntityTypeBuilder<OrderItem> builder)
     {
-        builder.ToTable("OrderItems");
+        builder.ToTable("OrderItems", t =>
+        {
+            t.HasCheckConstraint("CK_OrderItems_Quantity_Positive", "[Quantity] > 0");
+            t.HasCheckConstraint("CK_OrderItems_UnitPrice_NonNegative", "[UnitPrice] >= 0");
+        });
 
         builder.HasKey(i => i.Id);
 
@@ -23,7 +27,12 @@ public class OrderItemConfiguration : IEntityTypeConfiguration<OrderItem>
             .HasPrecision(18, 2)
             .IsRequired();
 
-        // Index on OrderId
+        // Nullable only for legacy rows that pre-date inventory tracking.
+        builder.HasOne<Product>()
+            .WithMany()
+            .HasForeignKey(i => i.ProductId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         builder.HasIndex(i => i.OrderId)
             .HasDatabaseName("IX_OrderItems_OrderId");
     }

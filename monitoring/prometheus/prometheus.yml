@@ -1,14 +1,18 @@
-﻿global:
+global:
   scrape_interval: 10s
   evaluation_interval: 10s
 
 rule_files:
   - "alert_rules.yml"
 
+# Targets the API container from docker-compose (service "api", port 8080).
+# If you run the API on the host instead (dotnet run, http://localhost:5138),
+# change the target to "host.docker.internal:5138" and add
+# `extra_hosts: ["host.docker.internal:host-gateway"]` to the prometheus service.
 scrape_configs:
   - job_name: "orderflow-api"
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:5138"]
+      - targets: ["api:8080"]
         labels:
           app: "orderflow"

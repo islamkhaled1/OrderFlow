@@ -1,843 +1,378 @@
-# OrderFlow — Educational .NET 10 E-Commerce Backend
+# OrderFlow — .NET 10 E-Commerce Order Backend
 
+[![CI](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
-[![EF Core 10](https://img.shields.io/badge/EF%20Core-10.0-512BD4?style=flat-square)](https://docs.microsoft.com/ef/core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-**OrderFlow** is an educational, production-style e-commerce backend built with **.NET 10**, **C#**, **Entity Framework Core 10**, **SQL Server**, and **Redis**.
+OrderFlow is an order-management backend built with **ASP.NET Core (.NET 10)**, **EF Core 10 / SQL Server**, **Redis**, **MediatR (CQRS)** and **OpenTelemetry / Prometheus / Grafana / Jaeger**. The focus is **correct business logic**: stock can never be oversold, retried requests never create duplicate orders, order state changes follow an explicit state machine, and read models/caches are updated through a transactional outbox.
 
-The primary purpose of OrderFlow is to illustrate how a simple CRUD backend logically evolves into advanced, high-performance patterns — such as **Clean Architecture**, **Vertical Slice Architecture**, **CQRS (Command Query Responsibility Segregation)**, **Redis Caching**, **Materialized Views (Read Models)**, and **Resilient Background Processing** — while remaining readable, clean, and practical for classroom walkthroughs and developer training.
+> The CI badge points at the workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml); it only reflects reality after the workflow has run on GitHub.
 
----
+## Table of contents
 
-## Table of Contents
-
-- [1. Business Scenario](#1-business-scenario)
-- [2. Architecture & Design Principles](#2-architecture--design-principles)
-  - [Clean Architecture Layers](#clean-architecture-layers)
-  - [Vertical Slice Architecture](#vertical-slice-architecture)
-  - [CQRS: Commands vs. Queries](#cqrs-commands-vs-queries)
-- [3. Sources of Truth & Data Models](#3-sources-of-truth--data-models)
-  - [Transactional Model (Source of Truth)](#transactional-model-source-of-truth)
-  - [Materialized View / Read Model](#materialized-view--read-model)
-  - [Redis Caching & Invalidation](#redis-caching--invalidation)
-- [4. Background Processing & Scoping](#4-background-processing--scoping)
-  - [The Singleton-to-Scoped Dependency Problem](#the-singleton-to-scoped-dependency-problem)
-  - [Lifecycle: Pending to Completed](#lifecycle-pending-to-completed)
-- [5. Project Structure](#5-project-structure)
-- [6. Database Indexes](#6-database-indexes)
-- [7. API Endpoints & Usage](#7-api-endpoints--usage)
-- [8. GitHub Quick Start](#8-github-quick-start)
-- [9. Running with Docker Compose](#9-running-with-docker-compose)
-- [10. Running Automated Tests](#10-running-automated-tests)
-- [11. Architectural Trade-offs & Philosophy](#11-architectural-trade-offs--philosophy)
-- [12. Monitoring & Observability Stack](#12-monitoring--observability-stack)
-  - [1. Visual Evidence & Live UIs Showcase](#1-visual-evidence--live-uis-showcase)
-  - [2. Core Metrics Catalog](#2-core-metrics-catalog)
-  - [3. Implementation Highlights (.NET 10 & OpenTelemetry)](#3-implementation-highlights-net-10--opentelemetry)
-  - [4. Hands-on Walkthrough: Running & Verifying the Stack](#4-hands-on-walkthrough-running--verifying-the-stack)
-  - [5. Detailed Verification Report](#5-detailed-verification-report)
+1. [Features](#1-features)
+2. [Architecture](#2-architecture)
+3. [Data model (ERD)](#3-data-model-erd)
+4. [Key design decisions](#4-key-design-decisions)
+5. [Authentication & authorization](#5-authentication--authorization)
+6. [API endpoints](#6-api-endpoints)
+7. [Getting started](#7-getting-started)
+8. [Configuration reference](#8-configuration-reference)
+9. [Database migrations](#9-database-migrations)
+10. [Testing & CI](#10-testing--ci)
+11. [Observability](#11-observability)
+12. [Load testing](#12-load-testing)
+13. [Trade-offs & known limitations](#13-trade-offs--known-limitations)
+14. [Contributing & license](#14-contributing--license)
 
 ---
 
-## 1. Business Scenario
+## 1. Features
 
-OrderFlow simulates a core e-commerce order-management system:
+- **Inventory with atomic reservation** — `Products.StockQuantity` is decremented by a single conditional `UPDATE … WHERE StockQuantity >= @qty AND IsActive = 1`, backed by a `CHECK (StockQuantity >= 0)` constraint. Concurrent buyers cannot oversell.
+- **Order lifecycle state machine** — `Pending → Completed` (admin) and `Pending → Cancelled` (owner/admin/expiry job). Invalid transitions return `409`. Cancelling releases the reserved stock exactly once.
+- **Idempotent order creation** — optional `Idempotency-Key` header; same key + same payload replays the original response, same key + different payload returns `422`.
+- **JWT authentication, role-based authorization** (`Customer`, `Admin`) with ownership checks. Customers get `404` for other customers' orders.
+- **Transactional outbox** — order events are written in the same SQL transaction as the order; a background processor updates the dashboard read model and invalidates Redis with retries, exponential backoff and a dead-letter state (admin endpoint to inspect/requeue).
+- **Paginated queries** (max page size 100), indexed for the access patterns; Redis cache-aside for order details with graceful fallback to SQL if Redis is down.
+- **Observability** — OpenTelemetry traces + metrics, Prometheus alert rules, Grafana dashboard, split liveness/readiness health checks.
+- **Tests** — unit tests plus integration tests running against a **real SQL Server** (no EF InMemory), including a 100-concurrent-requests-vs-limited-stock test.
 
-1. **Browsing & Placing Orders**: Customers select products and submit an order with desired quantities.
-2. **Server-Side Validation & Pricing**: The client never submits product names, prices, or totals. The backend fetches product records from SQL Server, captures price snapshots at that instant, calculates line totals and aggregate order totals on the server, and saves the order in `Pending` status.
-3. **High-Performance Order Inquiries**: Customers frequently retrieve order status and details. OrderFlow caches order details in Redis with an expiration TTL (Time-To-Live) and falls back to SQL Server on cache misses.
-4. **Order Fulfillment Automation**: An asynchronous `BackgroundService` runs periodically, moves pending orders to `Completed`, invalidates stale Redis cache entries, and rebuilds the denormalized dashboard read model.
-5. **Real-time Order Dashboard**: Store managers view order summaries. Instead of executing heavy table joins across transactional records on every request, the dashboard queries a pre-aggregated Materialized View table (`OrderDashboardReadModels`).
-
----
-
-## 2. Architecture & Design Principles
+## 2. Architecture
 
 ```mermaid
 graph TD
-    API["OrderFlow.API<br/>(Thin Controllers, Middleware, Swagger)"]
-    APP["OrderFlow.Application<br/>(Features, MediatR, DTOs, Validation)"]
-    INFRA["OrderFlow.Infrastructure<br/>(EF Core, SQL Server, Redis, BackgroundJobs)"]
-    DOM["OrderFlow.Domain<br/>(Entities, Enums, Invariants)"]
-
+    Client([Client]) -->|HTTPS + JWT| API
+    subgraph OrderFlow
+        API["OrderFlow.API<br/>controllers, auth, middleware, health"]
+        APP["OrderFlow.Application<br/>MediatR handlers, validation, DTOs"]
+        DOM["OrderFlow.Domain<br/>entities, state machine"]
+        INFRA["OrderFlow.Infrastructure<br/>EF Core, Redis, outbox, workers"]
+    end
     API --> APP
-    API --> DOM
+    APP --> DOM
     INFRA --> APP
     INFRA --> DOM
-    APP --> DOM
-
-    subgraph Core Business Layer
-        DOM
-        APP
-    end
-
-    subgraph Delivery & Persistence Layer
-        INFRA
-        API
-    end
+    API --> INFRA
+    INFRA --> SQL[(SQL Server)]
+    INFRA --> REDIS[(Redis cache)]
+    API -. OTLP .-> JAEGER[Jaeger]
+    PROM[Prometheus] -->|scrape /metrics| API
+    GRAF[Grafana] --> PROM
 ```
 
-### Clean Architecture Layers
+Dependencies point inward (Domain has no external dependencies). Features live in vertical slices under `OrderFlow.Application/Features/*`.
 
-Dependency rules flow strictly inward:
-
-- **`OrderFlow.Domain`**: Pure business domain. Contains entities (`Customer`, `Product`, `Order`, `OrderItem`), enums (`OrderStatus`), and domain rules. It has zero external dependencies on EF Core, ASP.NET Core, or Redis.
-- **`OrderFlow.Application`**: Application use cases. Contains MediatR commands, queries, handlers, DTOs, FluentValidation rules, and abstractions (`IOrderRepository`, `ICacheService`, etc.). It has no reference to infrastructure or persistence technologies.
-- **`OrderFlow.Infrastructure`**: Concrete adapters. Implements database access using EF Core 10, SQL Server migrations, Redis cache service, read model maintenance, and background workers.
-- **`OrderFlow.API`**: Presentation layer. Thin ASP.NET Core controllers dispatching requests to MediatR, configuring OpenAPI/Swagger, and handling global exceptions.
-
-### Vertical Slice Architecture
-
-Inside `OrderFlow.Application`, features are organized by use case rather than horizontal technical folders:
-
-```text
-OrderFlow.Application/
-└── Features/
-    └── Orders/
-        ├── CreateOrder/
-        │   ├── CreateOrderCommand.cs
-        │   ├── CreateOrderHandler.cs
-        │   └── CreateOrderValidator.cs
-        ├── GetOrderById/
-        │   ├── GetOrderByIdQuery.cs
-        │   └── GetOrderByIdHandler.cs
-        ├── GetOrders/
-        │   ├── GetOrdersQuery.cs
-        │   └── GetOrdersHandler.cs
-        └── GetDashboardOrders/
-            ├── GetDashboardOrdersQuery.cs
-            └── GetDashboardOrdersHandler.cs
-```
-
-Each slice encapsulates everything required for that specific business operation: command/query, validation, and execution logic.
-
-### CQRS: Commands vs. Queries
-
-| Concept | Purpose | Modifies State? | Data Source |
-|---|---|---|---|
-| **Commands** (`CreateOrderCommand`) | Intent to change system state | Yes | SQL Server Transactional Tables |
-| **Queries** (`GetOrdersQuery`) | Read order list | No | SQL Server Transactional Tables (`AsNoTracking()`) |
-| **Queries** (`GetOrderByIdQuery`) | Read detailed order | No | Redis Cache first, then SQL Server fallback |
-| **Queries** (`GetDashboardOrdersQuery`) | Read dashboard metrics | No | `OrderDashboardReadModels` (Read Model Table) |
-
----
-
-## 3. Sources of Truth & Data Models
-
-### Transactional Model (Source of Truth)
-
-SQL Server transactional tables represent the **single source of truth** for all business transactions:
-
-- `Customers` (Id, Name)
-- `Products` (Id, Name, Price)
-- `Orders` (Id, CustomerId, Status, CreatedAt, Total)
-- `OrderItems` (Id, OrderId, ProductName, Quantity, UnitPrice)
-
-#### Historical Immutability (Snapshot Pattern)
-When an order item is created, it captures a **snapshot** of the product's name and price at that exact moment. If the product's catalog price or title changes later, the customer's historical order remains unchanged.
-
-### Materialized View / Read Model
-
-`OrderDashboardReadModels` is a dedicated SQL table optimized exclusively for dashboard queries:
-
-```text
-=========================================================
-READ MODEL ONLY — NOT THE SOURCE OF TRUTH
-=========================================================
-Columns:
-- OrderId (PK)
-- CustomerName
-- ItemCount
-- Total
-- Status
-- CreatedAt
-```
-
-Why? In a traditional relational system, generating a dashboard requires joining `Orders`, `Customers`, and `OrderItems` and computing aggregates (`COUNT(Items)`, `SUM(Total)`). Under high traffic, this causes lock contention and slow response times.
-
-By reading from `OrderDashboardReadModels`, the dashboard query executes a simple `SELECT` on a flat table without any runtime joins or aggregate computations.
-
-### Redis Caching & Invalidation
-
-The `GET /api/orders/{id}` endpoint utilizes Redis caching:
-
-1. Request arrives for `GET /api/orders/{id}`.
-2. Build cache key: `order:{id}`.
-3. Check Redis:
-   - **Cache Hit**: Deserialize cached `OrderDetailsDto` and return immediately.
-   - **Cache Miss**: Query SQL Server transactional tables using `AsNoTracking()`, map to DTO, store in Redis with configured expiration (`Caching:OrderDetailsExpirationMinutes`), and return DTO.
-4. **Resilience**: If Redis is temporarily unavailable or offline, the cache service catches the socket/connection exception, logs a warning, and falls back to SQL Server seamlessly.
-5. **Cache Invalidation**: When the background worker transitions an order from `Pending` to `Completed`, it immediately issues `RemoveAsync("order:{id}")` to prevent clients from viewing stale status.
-
----
-
-## 4. Background Processing & Scoping
-
-### The Singleton-to-Scoped Dependency Problem
-
-`BackgroundService` is registered in ASP.NET Core as a **Singleton**. However, Entity Framework's `DbContext` and repository interfaces are registered as **Scoped** (created per HTTP request).
-
-> [!CAUTION]
-> Directly injecting a scoped service (`OrderFlowDbContext` or repositories) into a singleton `BackgroundService` will cause memory leaks, concurrency violations, and runtime exceptions.
-
-### Solution: `IServiceScopeFactory`
-
-`OrderProcessingBackgroundService` injects `IServiceScopeFactory`. On every timer tick, it creates an explicit dependency scope:
-
-```csharp
-using var scope = _scopeFactory.CreateScope();
-
-var orderProcessingService = scope.ServiceProvider.GetRequiredService<IOrderProcessingService>();
-var dashboardRefreshService = scope.ServiceProvider.GetRequiredService<IOrderDashboardRefreshService>();
-
-await orderProcessingService.ProcessPendingOrdersAsync(stoppingToken);
-await dashboardRefreshService.RefreshDashboardAsync(stoppingToken);
-```
-
-When the `using` block terminates, all scoped services and DbContext instances are safely disposed.
-
-### Lifecycle: Pending to Completed
-
-Every 30 seconds (configurable via `BackgroundJobs:IntervalSeconds`):
+**Create-order flow** (single SQL transaction):
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant BG as OrderProcessingBackgroundService
-    participant Scope as IServiceScope
-    participant Ops as OrderProcessingService
+    participant C as Client
+    participant A as API (CreateOrderHandler)
     participant DB as SQL Server
-    participant Cache as Redis (ICacheService)
-    participant Refresh as OrderDashboardRefreshService
-
-    BG->>Scope: CreateScope()
-    BG->>Ops: ProcessPendingOrdersAsync()
-    Ops->>DB: Query Orders where Status == 'Pending'
-    Ops->>Ops: order.MarkAsCompleted()
-    Ops->>DB: SaveChangesAsync()
-    Ops->>Cache: RemoveAsync("order:{id}") for each processed order
-    BG->>Refresh: RefreshDashboardAsync()
-    Refresh->>DB: Read transactional orders, items, customers
-    Refresh->>DB: Synchronize OrderDashboardReadModels table
-    BG->>Scope: Dispose scope
+    participant W as Outbox processor
+    participant R as Redis
+    C->>A: POST /api/orders (Idempotency-Key)
+    A->>DB: BEGIN
+    A->>DB: claim idempotency key
+    A->>DB: reserve stock (atomic UPDATE per product, ordered by id)
+    A->>DB: insert Order + items + OutboxMessage
+    A->>DB: store idempotent response, COMMIT
+    A-->>C: 201 Created
+    W->>DB: claim messages (UPDLOCK, READPAST, lease)
+    W->>DB: upsert OrderDashboardReadModels
+    W->>R: remove order:{id}
+    W->>DB: mark processed (or backoff / dead-letter)
 ```
 
----
+## 3. Data model (ERD)
 
-## 5. Project Structure
+```mermaid
+erDiagram
+    Customers ||--o{ Orders : places
+    Customers ||--o| Users : "profile of"
+    Orders ||--|{ OrderItems : contains
+    Products ||--o{ OrderItems : "referenced by"
+    Orders ||--o| OrderDashboardReadModels : "projected to"
+    Orders ||--o{ OutboxMessages : emits
 
-```text
-OrderFlow/
-├── OrderFlow.sln
-├── docker-compose.yml
-├── .gitignore
-├── .editorconfig
-├── LICENSE
-├── README.md
-│
-├── monitoring/
-│   ├── grafana/
-│   │   ├── dashboards/
-│   │   │   └── orderflow-dashboard.json
-│   │   └── provisioning/
-│   │       ├── dashboards/
-│   │       │   └── dashboards.yml
-│   │       └── datasources/
-│   │           └── datasources.yml
-│   └── prometheus/
-│       ├── alert_rules.yml
-│       └── prometheus.yml
-│
-├── src/
-│   ├── OrderFlow.Domain/
-│   │   ├── Common/
-│   │   ├── Entities/
-│   │   │   ├── Customer.cs
-│   │   │   ├── Product.cs
-│   │   │   ├── Order.cs
-│   │   │   └── OrderItem.cs
-│   │   ├── Enums/
-│   │   │   └── OrderStatus.cs
-│   │   └── Exceptions/
-│   │       └── DomainException.cs
-│   │
-│   ├── OrderFlow.Application/
-│   │   ├── Common/
-│   │   │   ├── Behaviors/
-│   │   │   │   └── ValidationBehavior.cs
-│   │   │   ├── Exceptions/
-│   │   │   │   ├── NotFoundException.cs
-│   │   │   │   ├── BadRequestException.cs
-│   │   │   │   └── ValidationException.cs
-│   │   │   └── Options/
-│   │   │       └── CachingOptions.cs
-│   │   ├── DTOs/
-│   │   │   ├── CreateOrderRequest.cs
-│   │   │   ├── CreateOrderResponse.cs
-│   │   │   ├── OrderDetailsDto.cs
-│   │   │   ├── OrderListItemDto.cs
-│   │   │   └── OrderDashboardDto.cs
-│   │   ├── Features/
-│   │   │   └── Orders/
-│   │   │       ├── CreateOrder/
-│   │   │       ├── GetOrderById/
-│   │   │       ├── GetOrders/
-│   │   │       └── GetDashboardOrders/
-│   │   ├── Interfaces/
-│   │   │   ├── IOrderRepository.cs
-│   │   │   ├── IProductRepository.cs
-│   │   │   ├── ICustomerRepository.cs
-│   │   │   ├── IOrderDashboardRepository.cs
-│   │   │   ├── ICacheService.cs
-│   │   │   ├── IOrderProcessingService.cs
-│   │   │   └── IOrderDashboardRefreshService.cs
-│   │   └── DependencyInjection.cs
-│   │
-│   ├── OrderFlow.Infrastructure/
-│   │   ├── BackgroundServices/
-│   │   │   ├── BackgroundJobOptions.cs
-│   │   │   └── OrderProcessingBackgroundService.cs
-│   │   ├── Caching/
-│   │   │   ├── RedisOptions.cs
-│   │   │   └── RedisCacheService.cs
-│   │   ├── Persistence/
-│   │   │   ├── Configurations/
-│   │   │   ├── Migrations/
-│   │   │   ├── Seed/
-│   │   │   │   └── OrderFlowDbContextSeed.cs
-│   │   │   └── OrderFlowDbContext.cs
-│   │   ├── ReadModels/
-│   │   │   └── OrderDashboardReadModel.cs
-│   │   ├── Repositories/
-│   │   │   ├── CustomerRepository.cs
-│   │   │   ├── ProductRepository.cs
-│   │   │   ├── OrderRepository.cs
-│   │   │   └── OrderDashboardRepository.cs
-│   │   ├── Services/
-│   │   │   ├── OrderProcessingService.cs
-│   │   │   └── OrderDashboardRefreshService.cs
-│   │   └── DependencyInjection.cs
-│   │
-│   └── OrderFlow.API/
-│       ├── Controllers/
-│       │   ├── OrdersController.cs
-│       │   └── DashboardController.cs
-│       ├── Middleware/
-│       │   └── ExceptionHandlingMiddleware.cs
-│       ├── Observability/
-│       │   ├── OrderFlowActivitySource.cs
-│       │   ├── OrderFlowMetrics.cs
-│       │   └── PendingOrdersMetrics.cs
-│       ├── appsettings.json
-│       ├── appsettings.Development.json
-│       └── Program.cs
-│
-├── submission/
-│   ├── VERIFICATION.md
-│   └── screenshots/
-│       ├── 01-grafana-dashboard.png
-│       ├── 02-jaeger-traces.png
-│       ├── 03-logs.png
-│       ├── 04-health-check.png
-│       └── 05-alerts.png
-│
-└── tests/
-    ├── OrderFlow.UnitTests/
-    │   ├── Domain/
-    │   └── Application/
-    └── OrderFlow.IntegrationTests/
-        ├── Infrastructure/
-        ├── Controllers/
-        └── CustomWebApplicationFactory.cs
+    Customers { int Id PK
+                string Name }
+    Users { int Id PK
+            string Email UK
+            string PasswordHash
+            string Role
+            int CustomerId FK }
+    Products { int Id PK
+               string Name
+               decimal Price
+               int StockQuantity "CHECK >= 0"
+               bool IsActive }
+    Orders { int Id PK
+             int CustomerId FK
+             string Status
+             decimal Total
+             datetime CreatedAt
+             datetime CompletedAt
+             datetime CancelledAt
+             string CancellationReason
+             rowversion RowVersion }
+    OrderItems { int Id PK
+                 int OrderId FK
+                 int ProductId FK
+                 string ProductName "snapshot"
+                 int Quantity
+                 decimal UnitPrice "snapshot" }
+    OrderDashboardReadModels { int OrderId PK
+                               string CustomerName
+                               int ItemCount
+                               decimal Total
+                               string Status }
+    OutboxMessages { guid Id PK
+                     string Type
+                     string Payload
+                     datetime ProcessedAt
+                     int Attempts
+                     datetime DeadLetteredAt }
+    IdempotencyRecords { int Id PK
+                         string Scope
+                         string Key "unique with Scope"
+                         string RequestHash
+                         string ResponseBody }
 ```
 
----
+Order items snapshot the product name and unit price so historical orders never change when the catalog does. Legacy items created before inventory existed have `ProductId = NULL` and never release stock.
 
-## 6. Database Indexes
+## 4. Key design decisions
 
-Carefully chosen indexes support both write transactions and read model maintenance:
+| Topic | Decision | Why |
+|---|---|---|
+| Overselling | Atomic conditional `UPDATE` + `CHECK` constraint, lines merged per product and reserved in ascending product-id order | Correct under concurrency without long locks; consistent ordering avoids deadlocks |
+| Reservation timing | Stock is reserved at order creation (status `Pending`) and released only on `Pending → Cancelled` | Customers can't check out stock that doesn't exist; a pending-order expiry job (default 60 min) frees abandoned reservations |
+| Double release | State machine + `Orders.RowVersion` optimistic concurrency; release and status change in one transaction | Two concurrent cancels cannot both release stock |
+| Completion | Explicit admin action (`POST /api/orders/{id}/complete`), no timer auto-completion | The previous timer silently completed every order, which is not a business rule |
+| Idempotency | Claim key, create order, reserve stock, store response in **one transaction**; scoped per customer; 24h retention | A crash can't leave a key claimed without an order (or an order without a key). Failed attempts don't poison the key |
+| Event delivery | Transactional outbox, at-least-once, idempotent handlers (dashboard recomputed from current state, cache removal) | No dual-write between SQL and Redis; duplicates are harmless |
+| Dashboard | Incremental upsert per event; full rebuild only via admin endpoint | Replaces the old full-table refresh every 30s |
+| Cache | Redis cache-aside for `GET /api/orders/{id}`; ownership is checked **after** the cache read; Redis failures are logged and counted, then fall back to SQL | Cache can never leak another customer's order |
+| Errors | Only expected Redis exceptions are swallowed; cancellation and programming errors propagate | The old catch-all hid real bugs |
 
-1. **`Orders` Table**:
-   - `IX_Orders_CustomerId`: Speeds up customer order queries.
-   - `IX_Orders_Status`: Used by the background worker to locate `Pending` orders without full table scans.
-   - `IX_Orders_CreatedAt`: Optimizes chronological order sorting.
-2. **`OrderItems` Table**:
-   - `IX_OrderItems_OrderId`: Speeds up joins when retrieving line items for an order.
-3. **`OrderDashboardReadModels` Table**:
-   - `IX_OrderDashboardReadModels_Status`: Enables instant filtering on dashboard status.
-   - `IX_OrderDashboardReadModels_CreatedAt`: Powers chronological dashboard sorting.
+## 5. Authentication & authorization
 
----
+- `POST /api/auth/register` creates a **Customer** (and its profile). Admins cannot self-register.
+- `POST /api/auth/login` returns a signed JWT (`sub`, `role`, `customer_id`; default lifetime 60 minutes). Passwords are hashed with ASP.NET Core's `PasswordHasher`.
+- An **Admin** is seeded at startup only if `Seed:AdminEmail` and `Seed:AdminPassword` are configured.
+- The signing key is **never** stored in the repo: set `Jwt__SigningKey` (≥ 32 chars) via environment/user-secrets. The app refuses to start without it.
+- Auth endpoints are rate limited (`RateLimiting:AuthPermitPerMinute`, default 10/min).
+- Customers can only see/cancel their own orders; non-owners receive `404`. Admins can complete orders, read the dashboard and use the admin endpoints but cannot place orders (`403`).
 
-## 7. API Endpoints & Usage
+## 6. API endpoints
 
-### 1. Create an Order
-- **Endpoint**: `POST /api/orders`
-- **CQRS**: Command
-- **Description**: Creates an order in `Pending` status.
+Swagger UI is available at `/swagger`. All order endpoints require `Authorization: Bearer <token>`.
 
-#### Request Body
-```json
-{
-  "customerId": 1,
-  "items": [
-    {
-      "productId": 1,
-      "quantity": 2
-    },
-    {
-      "productId": 2,
-      "quantity": 1
-    }
-  ]
-}
+| Method & path | Role | Notes |
+|---|---|---|
+| `POST /api/auth/register` | anonymous | `{ email, password, name }` → `201` + token |
+| `POST /api/auth/login` | anonymous | `{ email, password }` → `200` + token |
+| `POST /api/orders` | Customer | Header `Idempotency-Key` (optional, ≤128 chars). `201`; replay adds `Idempotent-Replayed: true`. `409` insufficient stock, `422` key reused with different payload |
+| `GET /api/orders/{id}` | owner / Admin | Cached; `404` for non-owner |
+| `GET /api/orders` | Customer/Admin | Query: `page`, `pageSize` (≤100), `status`, `from`, `to`, `customerId`. Returns a paged result; customers only see their own |
+| `POST /api/orders/{id}/cancel` | owner / Admin | `{ "reason": "…" }`; releases stock; `409` if not `Pending` |
+| `POST /api/orders/{id}/complete` | Admin | `409` if not `Pending` |
+| `GET /api/dashboard/orders` | Admin | Paged read model; eventually consistent |
+| `GET /api/admin/outbox/dead-letters` | Admin | Inspect failed outbox messages |
+| `POST /api/admin/outbox/dead-letters/{id}/requeue` | Admin | Retry a dead letter |
+| `POST /api/admin/dashboard/rebuild` | Admin | Full read-model rebuild |
+| `GET /health/live`, `/health/ready`, `/health` | anonymous | Liveness / readiness (SQL only) / detailed (Redis down = Degraded) |
+| `GET /metrics` | anonymous | Prometheus scrape endpoint |
+
+Error responses use RFC 7807 problem details with status mapping 400 (validation), 401, 403, 404, 409 (conflicts/insufficient stock/invalid transition/concurrency), 422 (idempotency payload mismatch) and 500 (no internal details leaked).
+
+Example:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:5138/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@example.com","password":"Demo_Pass1!"}' | jq -r .accessToken)
+
+curl -X POST http://localhost:5138/api/orders \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Idempotency-Key: 11111111-1111-1111-1111-111111111111' \
+  -H 'Content-Type: application/json' \
+  -d '{"items":[{"productId":1,"quantity":2}]}'
 ```
 
-#### Response (`201 Created`)
-```json
-{
-  "orderId": 1,
-  "customerId": 1,
-  "total": 290.00,
-  "status": "Pending",
-  "createdAt": "2026-09-13T17:15:00.000Z"
-}
-```
+A ready-made request collection is in [OrderFlow.API.http](src/OrderFlow.API/OrderFlow.API.http). The seeded demo catalog has product ids 1–5 with limited stock.
 
----
+## 7. Getting started
 
-### 2. Get Order by ID
-- **Endpoint**: `GET /api/orders/{id}`
-- **CQRS**: Query (with Redis Cache)
-- **Description**: Returns order details. Cached in Redis under `order:{id}`.
+**Prerequisites:** [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), SQL Server (LocalDB, container or instance); Redis is optional (the API falls back to SQL).
 
-#### Response (`200 OK`)
-```json
-{
-  "orderId": 1,
-  "customerId": 1,
-  "customerName": "John Doe",
-  "createdAt": "2026-09-13T17:15:00.000Z",
-  "status": "Pending",
-  "total": 290.00,
-  "items": [
-    {
-      "productName": "Mechanical Keyboard",
-      "quantity": 2,
-      "unitPrice": 120.00,
-      "lineTotal": 240.00
-    },
-    {
-      "productName": "Wireless Mouse",
-      "quantity": 1,
-      "unitPrice": 50.00,
-      "lineTotal": 50.00
-    }
-  ]
-}
-```
+### Option A — run the API locally
 
----
-
-### 3. List Orders
-- **Endpoint**: `GET /api/orders`
-- **CQRS**: Query
-- **Description**: Read-only list of orders using `AsNoTracking()`.
-
-#### Response (`200 OK`)
-```json
-[
-  {
-    "orderId": 1,
-    "customerName": "John Doe",
-    "total": 290.00,
-    "status": "Completed",
-    "createdAt": "2026-09-13T17:15:00.000Z"
-  }
-]
-```
-
----
-
-### 4. Get Dashboard Orders
-- **Endpoint**: `GET /api/dashboard/orders`
-- **CQRS**: Query
-- **Data Source**: `OrderDashboardReadModels` table (Materialized View)
-- **Description**: Retrieves read-optimized metrics without computing runtime joins.
-
-#### Response (`200 OK`)
-```json
-[
-  {
-    "orderId": 1,
-    "customerName": "John Doe",
-    "itemCount": 2,
-    "total": 290.00,
-    "status": "Completed",
-    "createdAt": "2026-09-13T17:15:00.000Z"
-  }
-]
-```
-
----
-
-## 8. GitHub Quick Start
-
-Follow these steps to clone, configure, build, and run OrderFlow locally.
-
-### Prerequisites
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- SQL Server (LocalDB, standalone instance, or Docker)
-- Redis (Docker or standalone instance; optional due to graceful fallback)
-
-### Clone & Build
 ```bash
 git clone https://github.com/islamkhaled1/OrderFlow.git
 cd OrderFlow
 
-# Restore dependencies
-dotnet restore
+# Required secrets (user-secrets keeps them out of git)
+dotnet user-secrets set "Jwt:SigningKey" "<random string of at least 32 chars>" --project src/OrderFlow.API
+# Optional: seed an admin
+dotnet user-secrets set "Seed:AdminEmail" "admin@example.com" --project src/OrderFlow.API
+dotnet user-secrets set "Seed:AdminPassword" "<strong password>" --project src/OrderFlow.API
 
-# Build solution in Release mode
-dotnet build --configuration Release
+dotnet run --project src/OrderFlow.API      # http://localhost:5138, swagger at /swagger
 ```
 
-### Apply Database Migrations
-```bash
-# If using Windows LocalDB (default in appsettings.Development.json):
-dotnet ef database update --project src/OrderFlow.Infrastructure --startup-project src/OrderFlow.API
-```
+In `Development` the connection string targets `(localdb)\MSSQLLocalDB`. Migrations are applied automatically on startup (`Database:AutoMigrate`, default `true`).
 
-### Run the Web API
-```bash
-dotnet run --project src/OrderFlow.API
-```
-
-Open your browser and navigate to:
-- **Swagger UI**: `https://localhost:5001/swagger` (or `http://localhost:5000/swagger`)
-
----
-
-## 9. Running with Docker Compose
-
-Spin up the entire infrastructure and observability stack (SQL Server, Redis, Prometheus, Grafana, and Jaeger) with a single command:
+### Option B — Docker Compose (API + SQL Server + Redis + Prometheus + Grafana + Jaeger)
 
 ```bash
-docker compose up -d
+cp .env.example .env      # then edit every placeholder
+docker compose up -d --build
 ```
 
-Containers:
-- **SQL Server 2022**: `localhost:1433` (User: `sa`, Password: `YourStrong@Passw0rd!`)
-- **Redis**: `localhost:6379`
-- **Prometheus**: `http://localhost:9090` (Scrapes API at `/metrics`)
-- **Grafana**: `http://localhost:3000` (User: `admin`, Password: `admin` — auto-provisioned dashboard)
-- **Jaeger UI**: `http://localhost:16686` (OTLP collector on port `4317` / `4318`)
+| Service | URL |
+|---|---|
+| API / Swagger | http://localhost:8080 , http://localhost:8080/swagger |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (credentials from `.env`) |
+| Jaeger | http://localhost:16686 |
 
-Update your connection string in `src/OrderFlow.API/appsettings.json` or pass via environment variable:
+Compose refuses to start if `MSSQL_SA_PASSWORD`, `JWT_SIGNING_KEY` or `GRAFANA_ADMIN_PASSWORD` are missing — there are no default secrets in the repo.
 
-```bash
-ConnectionStrings__DefaultConnection="Server=localhost,1433;Database=OrderFlowDb;User Id=sa;Password=YourStrong@Passw0rd!;TrustServerCertificate=True;MultipleActiveResultSets=true"
-```
+> **Verification status (2026-10-24, Docker Desktop on Windows):** `docker compose config -q` and `docker compose up -d --build` succeeded and all six services came up (SQL Server and Redis healthy). Observed: `/health/live` and `/health/ready` return 200 and `/health` reports `sqlserver` and `redis` Healthy; both migrations applied on startup and seed data/admin were created; register → create order → idempotent replay (same order id) → get order → anonymous 401 behaved as documented; Prometheus target `orderflow-api` is `up`, all 6 alert rules load with health `ok`, and `orderflow_orders_created_total` reflected the new order; Grafana has the provisioned `Prometheus` datasource and `OrderFlow Dashboard`; Jaeger has the `OrderFlow` service with traces for HTTP, `CreateOrder` and `GetOrderById` spans. Not covered: visual review of the Grafana dashboard panels, alert firing, and a real GitHub Actions run.
+>
+> **Troubleshooting:**
+> - *Name conflict* (`container name "/orderflow-prometheus" is already in use`): the compose file uses fixed `container_name`s and an older stack under another project name can hold them. Check `docker ps -a --filter name=orderflow-` and remove only the stale OrderFlow containers, or run `docker compose down` in the project that owns them.
+> - *Redis unhealthy with `Can't handle RDB format version 15`*: a persisted `redis-data` volume was written by a newer Redis than the pinned `redis:7-alpine`. Redis only holds cache data, so `docker compose down && docker volume rm <project>_redis-data` fixes it.
+> - *Port clash*: set `API_HOST_PORT` in `.env` (the stack above ran with `18080`).
 
----
+## 8. Configuration reference
 
-## 10. Running Automated Tests
+Nested keys map to environment variables with `__` (e.g. `Jwt:SigningKey` → `Jwt__SigningKey`).
 
-OrderFlow includes comprehensive unit and integration test suites:
-
-- **Unit Tests**: Domain total calculations, invariant validations, status lifecycle transitions, FluentValidation rules, and MediatR handlers with mocked dependencies.
-- **Integration Tests**: Full end-to-end HTTP API tests utilizing `WebApplicationFactory<Program>`, in-memory database isolation, and test cache assertions.
-
-```bash
-dotnet test --configuration Release
-```
-
-Expected output:
-```text
-Passed!  - Failed: 0, Passed: 26, Skipped: 0, Total: 26 - OrderFlow.UnitTests.dll (net10.0)
-Passed!  - Failed: 0, Passed:  7, Skipped: 0, Total:  7 - OrderFlow.IntegrationTests.dll (net10.0)
-```
-
----
-
-## 11. Architectural Trade-offs & Philosophy
-
-### Why This Project Intentionally Avoids Microservices & Message Brokers
-
-In enterprise architectures, background processing and materialized view synchronization often use message brokers (Kafka, RabbitMQ, Azure Service Bus) with distributed transaction orchestrators (MassTransit, Outbox pattern).
-
-For an **educational project**, introducing distributed brokers creates significant operational overhead:
-- Requires multiple distributed processes and network listeners.
-- Introduces eventual consistency race conditions that obscure the fundamental architectural concepts.
-- Requires complex deployment scripts and distributed tracing.
-
-**OrderFlow demonstrates the exact same architectural boundaries** (Transactional Source of Truth, CQRS Segregation, Read Models, Redis Caching, and Asynchronous Workers) using standard ASP.NET Core `BackgroundService` and database-backed Materialized Views. This preserves high readability and pedagogical clarity while teaching patterns that directly transfer to enterprise architectures.
-
----
-
-## 12. Monitoring & Observability Stack
-
-OrderFlow includes an enterprise-grade, production-style Monitoring & Observability stack built with **OpenTelemetry (.NET 10)**, **Prometheus**, **Grafana**, and **Jaeger**. It provides complete full-stack visibility across the three pillars of observability: **Metrics**, **Distributed Tracing**, and **Structured Logging**, alongside **Component Health Checks** and **Automated Alerting**.
-
-```mermaid
-graph LR
-    API["OrderFlow API (.NET 10)<br/>:5138"]
-    PROM["Prometheus<br/>:9090"]
-    GRAF["Grafana<br/>:3000"]
-    JAEGER["Jaeger<br/>:16686"]
-    REDIS["Redis<br/>:6379"]
-    SQL["SQL Server<br/>:1433"]
-
-    API -- "Scrape /metrics" --> PROM
-    PROM --> GRAF
-    API -- "OTLP Traces (:4317)" --> JAEGER
-    API -- "Health Check (:5138/health)" --> REDIS
-    API -- "Health Check (:5138/health)" --> SQL
-```
-
----
-
-### 1. Visual Evidence & Live UIs Showcase
-
-All components are fully validated with authentic runtime screenshots captured from the running stack:
-
-#### A. Pre-Provisioned Grafana Dashboard
-Accessible at `http://localhost:3000/d/orderflow-dashboard/orderflow-dashboard` (Credentials: `admin` / `admin`):
-
-![Grafana Dashboard](submission/screenshots/01-grafana-dashboard.png)
-
-The dashboard automatically visualizes 5 vital system metrics:
-1. **Request Count**: Real-time line graph of incoming request throughput broken down by route.
-2. **Request Duration**: 95th percentile latency distribution histogram (`histogram_quantile(0.95, ...)`).
-3. **Error Count**: Stat panel tracking HTTP 4xx and 5xx application errors.
-4. **Orders Created**: Real-time counter showing cumulative orders placed.
-5. **Pending Orders**: Observable backlog gauge of orders currently awaiting background worker processing.
-
----
-
-#### B. Distributed Tracing in Jaeger
-Accessible at `http://localhost:16686/search` (Service: `OrderFlow`):
-
-![Jaeger Distributed Tracing](submission/screenshots/02-jaeger-traces.png)
-
-Traces capture parent-to-child span hierarchies from HTTP arrival down to internal domain activities (`CreateOrder`, `GetOrderById`, `GetOrders`) with contextual business tags:
-- `order.customer_id`, `order.items_count`, `order.id`, `order.total`, and `order.status`.
-
----
-
-#### C. Contextual Structured Logging
-OrderFlow emits strongly-typed structured logs adhering to high-performance logging practices:
-
-![Structured Logging Console Output](submission/screenshots/03-logs.png)
-
-Sample log events:
-```text
-info: OrderFlow.API.Controllers.OrdersController - Creating order for CustomerId 1 with 1 items
-info: OrderFlow.API.Controllers.OrdersController - Order 5018 created successfully. Total: 240.00, Status: Pending
-info: OrderFlow.Application.Features.Orders.GetOrderById - Cache miss for order 5018. Fetching from database.
-info: OrderFlow.Infrastructure.Services.OrderProcessingService - Successfully transitioned orders 5018 to Completed
-info: OrderFlow.Infrastructure.Caching.RedisCacheService - Cache key 'order:5018' removed successfully
-info: OrderFlow.Application.Features.Orders.GetOrderById - Cache hit for order 5018.
-```
-
----
-
-#### D. Component Health Checks & Resilient Fallback
-Accessible at `http://localhost:5138/health` returning detailed UI-compatible JSON:
-
-![Component Health Checks](submission/screenshots/04-health-check.png)
-
-```json
-{
-  "status": "Healthy",
-  "totalDuration": "00:00:00.0123456",
-  "entries": {
-    "sqlserver": {
-      "data": {},
-      "description": null,
-      "duration": "00:00:00.0081234",
-      "status": "Healthy",
-      "tags": ["db", "sql"]
-    },
-    "redis": {
-      "data": {},
-      "description": null,
-      "duration": "00:00:00.0034567",
-      "status": "Healthy",
-      "tags": ["cache", "redis"]
-    }
-  }
-}
-```
-
-> [!NOTE]
-> **Graceful Degradation**: If Redis stops or becomes unreachable, `/health` reports `redis` as `Unhealthy`, but the API gracefully falls back to SQL Server transactional tables without dropping requests or throwing 500 errors to consumers.
-
----
-
-#### E. Prometheus Real-time Alerting Rules
-Accessible at `http://localhost:9090/alerts`:
-
-![Prometheus Alerting Rules](submission/screenshots/05-alerts.png)
-
-Configured in `monitoring/prometheus/alert_rules.yml`:
-- **`HighErrorRate`**: Triggers if HTTP error rate exceeds `0.5 errors/sec` over 5 minutes (`sum(rate(orderflow_http_errors_total[5m])) > 0.5`), indicating abnormal application failures or downstream service disruption.
-- **`HighPendingOrders`**: Triggers if pending orders exceed `50` for 5 minutes (`orderflow_orders_pending > 50`), warning that the background worker may be delayed, stalled, or failing.
-
----
-
-### 2. Core Metrics Catalog
-
-Metrics are exposed at `http://localhost:5138/metrics` in standard Prometheus exposition format:
-
-| Metric Name | Instrument | Description & Tags |
+| Key | Default | Description |
 |---|---|---|
-| `orderflow_http_requests_total` | `Counter<long>` | Total incoming HTTP requests tagged by `http.request.method`, `http.route`, and `http.response.status_code`. |
-| `http_server_request_duration_seconds` | `Histogram` | Request duration distribution buckets, sum, and count per route. |
-| `orderflow_http_errors_total` | `Counter<long>` | Total HTTP 4xx and 5xx errors recorded via global exception middleware. |
-| `orderflow_orders_created_total` | `Counter<long>` | Total number of successfully placed customer orders. |
-| `orderflow_orders_pending` | `ObservableGauge<long>` | Real-time gauge reflecting transactional orders currently in `Pending` state awaiting background worker fulfillment. |
-| `orderflow_worker_cycles_total` | `Counter<long>` | Cumulative number of background worker processing loops executed. |
-| `orderflow_worker_orders_processed_total` | `Counter<long>` | Cumulative number of pending orders transitioned to `Completed`. |
+| `ConnectionStrings:DefaultConnection` | placeholder | SQL Server connection string |
+| `Redis:ConnectionString` | `localhost:6379,abortConnect=false` | Redis (500 ms timeouts) |
+| `Jwt:SigningKey` | **required** | ≥ 32 chars; never commit |
+| `Jwt:Issuer` / `Jwt:Audience` / `Jwt:AccessTokenMinutes` | `OrderFlow` / `OrderFlow.Clients` / `60` | Token settings |
+| `Seed:AdminEmail` / `Seed:AdminPassword` | unset | Seeds an Admin when both set |
+| `Caching:OrderDetailsExpirationMinutes` | `5` | Order cache TTL |
+| `BackgroundJobs:IntervalSeconds` | `60` | Maintenance worker interval |
+| `BackgroundJobs:PendingOrderExpirationMinutes` | `60` | Cancel pending orders older than this |
+| `BackgroundJobs:ExpirationBatchSize` | `100` | Orders expired per cycle |
+| `Outbox:*` | see `OutboxOptions` | Poll interval, batch size, lease, max attempts (8) |
+| `Idempotency:RetentionHours` | `24` | Key retention |
+| `RateLimiting:AuthPermitPerMinute` | `10` | Auth endpoint limit |
+| `Database:AutoMigrate` | `true` | Apply migrations on startup |
+| `OpenTelemetry:OtlpEndpoint` | `http://localhost:4317` | Empty disables OTLP export |
+| `OpenTelemetry:ConsoleExporter` | `false` | Trace console exporter |
+| `ORDERFLOW_TEST_SQL` (tests only) | LocalDB | Server-level SQL connection string for integration tests |
 
----
-
-### 3. Implementation Highlights (.NET 10 & OpenTelemetry)
-
-#### A. OpenTelemetry Configuration (`Program.cs`)
-```csharp
-var otelResource = ResourceBuilder.CreateDefault().AddService("OrderFlow");
-
-builder.Services.AddOpenTelemetry()
-    .WithTracing(tracing =>
-    {
-        tracing
-            .SetResourceBuilder(otelResource)
-            .AddSource(OrderFlowActivitySource.Name)
-            .AddAspNetCoreInstrumentation()
-            .AddConsoleExporter();
-
-        var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
-        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
-        {
-            tracing.AddOtlpExporter(opts => opts.Endpoint = new Uri(otlpEndpoint));
-        }
-    })
-    .WithMetrics(metrics =>
-    {
-        metrics
-            .SetResourceBuilder(otelResource)
-            .AddMeter(OrderFlowMetrics.MeterName)
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddPrometheusExporter();
-    });
-```
-
-#### B. Safe Scoped Access in Observable Gauges (`PendingOrdersMetrics.cs`)
-Because `ObservableGauge` callbacks run as singletons inside the telemetry pipeline, directly injecting EF Core's scoped `DbContext` is prohibited. OrderFlow uses `IServiceScopeFactory` to safely create short-lived scopes:
-
-```csharp
-private long GetPendingOrdersCount()
-{
-    try
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<OrderFlowDbContext>();
-        return dbContext.Orders
-            .AsNoTracking()
-            .Count(o => o.Status == OrderStatus.Pending);
-    }
-    catch (Exception ex)
-    {
-        _logger.LogWarning(ex, "Failed to query pending orders count for metrics.");
-        return -1;
-    }
-}
-```
-
-#### C. Custom Business Activity Spans (`OrdersController.cs`)
-```csharp
-using var activity = OrderFlowActivitySource.Instance.StartActivity("CreateOrder");
-activity?.SetTag("order.customer_id", request.CustomerId);
-activity?.SetTag("order.items_count", request.Items.Count);
-
-var response = await _mediator.Send(command, cancellationToken);
-
-activity?.SetTag("order.id", response.OrderId);
-activity?.SetTag("order.total", response.Total);
-activity?.SetTag("order.status", response.Status);
-```
-
----
-
-### 4. Hands-on Walkthrough: Running & Verifying the Stack
-
-Follow this hands-on guide to experience the full observability loop in action:
-
-#### Step 1: Start the Infrastructure Stack
-```bash
-docker compose up -d
-```
-Verify that all 5 containers are up:
-- **SQL Server 2022**: `localhost:1433`
-- **Redis**: `localhost:6379`
-- **Prometheus**: `http://localhost:9090`
-- **Grafana**: `http://localhost:3000` (`admin` / `admin`)
-- **Jaeger UI**: `http://localhost:16686`
-
-#### Step 2: Run the Web API
-```bash
-dotnet run --project src/OrderFlow.API
-```
-The API starts on `http://localhost:5138` and automatically connects to the observability pipelines.
-
-#### Step 3: Generate Traffic & Observe
-Run the following commands to create orders and retrieve them:
+## 9. Database migrations
 
 ```bash
-# 1. Create an order (Generates trace span & increments orderflow_orders_created_total)
-curl -X POST http://localhost:5138/api/orders \
-  -H "Content-Type: application/json" \
-  -d '{"customerId": 1, "items": [{"productId": 1, "quantity": 2}, {"productId": 2, "quantity": 1}]}'
-
-# 2. Get order by ID (First call: Cache Miss -> Fetches DB -> Populates Redis)
-curl -X GET http://localhost:5138/api/orders/1
-
-# 3. Get order by ID again (Second call: Cache Hit -> Instant Redis read)
-curl -X GET http://localhost:5138/api/orders/1
-
-# 4. Trigger an intentional 404 (Increments orderflow_http_errors_total)
-curl -X GET http://localhost:5138/api/orders/999999
+dotnet ef database update --project src/OrderFlow.Infrastructure --startup-project src/OrderFlow.API
+dotnet ef migrations add <Name> --project src/OrderFlow.Infrastructure --startup-project src/OrderFlow.API
 ```
 
-- Navigate to **Grafana** (`http://localhost:3000/d/orderflow-dashboard/orderflow-dashboard`) to watch the request rate, latency, and order counters rise.
-- Open **Jaeger** (`http://localhost:16686/search`) and select Service `OrderFlow` to inspect detailed spans and business attributes.
-- Open **Prometheus Targets** (`http://localhost:9090/targets`) to verify that `orderflow-api` is in state `UP`.
+- `InitialCreate` is untouched.
+- `*_InventoryAuthOutboxIdempotency` adds stock/`IsActive`, order lifecycle columns and `RowVersion`, `Users`, `OutboxMessages`, `IdempotencyRecords`, constraints and indexes. Existing products are initialised with `StockQuantity = 100`; existing orders keep their data (legacy order items have a `NULL` `ProductId`).
+- An integration test fails if the EF model has pending changes without a migration.
 
-#### Step 4: Chaos Test (Dependency Failure & Graceful Degradation)
-Simulate a Redis outage while the system is under operation:
+## 10. Testing & CI
 
 ```bash
-# Stop the Redis container
-docker compose stop redis
+dotnet test OrderFlow.sln -c Release
 ```
 
-1. Check health: `curl http://localhost:5138/health` &rarr; Redis reports `Unhealthy`, overall status `Unhealthy`.
-2. Retrieve order: `curl http://localhost:5138/api/orders/1` &rarr; Returns `200 OK` successfully!
-3. Review console logs: Notice the graceful fallback warning:
-   ```text
-   warn: OrderFlow.Infrastructure.Caching.RedisCacheService - Redis connection is unavailable. Skipping cache read/write. Fetching from database.
-   ```
-4. Restart Redis:
-   ```bash
-   docker compose start redis
-   ```
-   Check health again &rarr; Automatically recovers to `Healthy`.
+Integration tests use a **real SQL Server** and create/drop a database per test class. Locally they use LocalDB by default; set `ORDERFLOW_TEST_SQL` (e.g. `Server=localhost,1433;User Id=sa;Password=...;TrustServerCertificate=True`) to use another server. API-level tests use an in-memory cache double with failure injection. The real `RedisCacheService` has its own tests (`RedisCacheServiceRealRedisTests`) that run **only when `ORDERFLOW_TEST_REDIS` is set** and are reported as skipped otherwise:
 
----
+```bash
+docker run -d --name orderflow-test-redis -p 6379:6379 redis:7
+ORDERFLOW_TEST_REDIS=localhost:6379 dotnet test OrderFlow.sln -c Release   # PowerShell: $env:ORDERFLOW_TEST_REDIS='localhost:6379'
+```
 
-### 5. Detailed Verification Report
-For complete test logs, verification matrices, and audit records, see:
-- [`submission/VERIFICATION.md`](submission/VERIFICATION.md)
+Latest local run (Windows, .NET 10 SDK, LocalDB):
+
+```text
+Passed!  - Failed: 0, Passed: 68, Skipped: 0, Total: 68 - OrderFlow.UnitTests.dll
+Passed!  - Failed: 0, Passed: 57, Skipped: 4, Total: 61 - OrderFlow.IntegrationTests.dll
+```
+
+The 4 skipped tests are the real-Redis tests. With `ORDERFLOW_TEST_REDIS=localhost:6379` pointed at the compose Redis they were run separately and **all 4 passed** (`dotnet test --filter FullyQualifiedName~RedisCacheService`: 12/12 unit, 4/4 integration).
+
+Covered scenarios include: 100 concurrent orders against stock of 10 (exactly 10 succeed, stock ends at 0, never negative), concurrent same-key idempotent requests (one order), double-cancel releases stock once, cancel vs. complete races, invalid transitions, authentication/authorization and ownership rules, outbox processing/retry/dead-letter, cache hit/miss/Redis-down fallback, pagination bounds and migration/model consistency.
+
+The GitHub Actions workflow ([ci.yml](.github/workflows/ci.yml)) restores, checks formatting, builds in Release, runs all tests against a SQL Server 2022 service container and lists vulnerable packages. It has not yet been observed running on GitHub.
+
+## 11. Observability
+
+- **Metrics** (`/metrics`): HTTP request/error counters and duration histogram, `orderflow_orders_created_total`, `orderflow_orders_pending`, idempotency replays, order transitions, `orderflow_outbox_pending`, `orderflow_outbox_dead_letter_backlog`, `orderflow_outbox_processed_total` / `failed` / `dead_lettered`, `orderflow_cache_hits_total` / `misses` / `errors`, `orderflow_worker_failures_total`, `orderflow_orders_expired_total`.
+- **Tracing**: OpenTelemetry (ASP.NET Core + custom `OrderFlow` and `OrderFlow.Background` sources) exported to Jaeger via OTLP.
+- **Alerts** ([alert_rules.yml](monitoring/prometheus/alert_rules.yml)): `HighErrorRate`, `HighPendingOrders`, `OutboxBacklogGrowing`, `OutboxDeadLetters`, `BackgroundWorkerFailures`, `CacheErrors`.
+- **Health**: `/health/live` (process), `/health/ready` (SQL Server), `/health` (details redacted, Redis down reports `Degraded`).
+
+Screenshots `01`–`03` in `submission/screenshots/` (captured 2026-09-27) predate the inventory/auth/outbox work and are **outdated legacy images**; they are kept only because [submission/VERIFICATION.md](submission/VERIFICATION.md) (which also describes that earlier version) refers to them, and are not embedded here. The current images were captured from the live local stack with headless Chrome and show **local demo traffic** (a few dozen real API requests after resetting the disposable demo volumes), not production data: `v2-grafana-dashboard.png` (kiosk mode, 15 min window; 14 orders created, 6 pending), `v2-jaeger-traces.png` (Jaeger search for `POST api/Orders`: 19 recent traces, each with an HTTP span and a `CreateOrder` span) and `v2-prometheus-alerts.png` (the six rules in `alert_rules.yml`, all loaded with health `ok` and state **inactive** — no alert fired).
+
+![Grafana dashboard (local demo traffic)](submission/screenshots/v2-grafana-dashboard.png)
+![Jaeger traces for POST api/Orders (local demo traffic)](submission/screenshots/v2-jaeger-traces.png)
+![Prometheus alert rules, all inactive](submission/screenshots/v2-prometheus-alerts.png)
+
+`04-health-check.png` and `05-alerts.png` were also re-captured from the running local stack (2026-10-25). `04-health-check.png` is the raw response of `GET /health` (observed HTTP 200, `sqlserver` and `redis` both `Healthy`; `/health/live` and `/health/ready` also returned 200). `05-alerts.png` is the Prometheus Alerts page with `HighErrorRate` and `OutboxDeadLetters` expanded to show their expressions, `for` durations and severities; all six rules were `inactive` with health `ok`, so no alert fired.
+
+![Health endpoint response](submission/screenshots/04-health-check.png)
+![Prometheus alerts with rule details](submission/screenshots/05-alerts.png)
+
+## 12. Load testing
+
+[loadtests/orders.js](loadtests/orders.js) registers one k6 customer in `setup()` (`POST /api/auth/register` → `/api/auth/login`, shared token because auth endpoints are rate limited to `RateLimiting:AuthPermitPerMinute`, default 10/min), creates one seed order with an `Idempotency-Key`, then runs two concurrent scenarios: `reads` (`VUS` VUs, `GET /api/orders/{id}` on the seed order, i.e. the cache-aside path) and `creates` (`VUS/5` VUs, `POST /api/orders` for 1 unit of `PRODUCT_ID`; `409` stock conflicts are accepted). Thresholds: read failure rate < 1 %, read p95 < 500 ms.
+
+**Prerequisites:** [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) (`winget install k6`, `brew install k6`, or run `grafana/k6` in Docker), a running API with a reachable SQL Server (and Redis for the cached path), and enough stock in the target product. Seeded product `4` (USB-C adapter) has only 200 units, so for a sustained run restock it first (**dev databases only**):
+
+```sql
+UPDATE Products SET StockQuantity = 1000000;
+```
+
+```bash
+# Local API (dotnet run → http://localhost:5138) or compose (http://localhost:8080)
+k6 run -e BASE_URL=http://localhost:8080 -e VUS=10 -e DURATION=30s -e PRODUCT_ID=4 loadtests/orders.js
+
+# Without a local k6 install (Docker Desktop; use host.docker.internal to reach a host-published API)
+docker run --rm -v "${PWD}/loadtests:/scripts" -e BASE_URL=http://host.docker.internal:8080 grafana/k6 run /scripts/orders.js
+```
+
+Environment variables: `BASE_URL` (default `http://localhost:8080`), `VUS` (10), `DURATION` (`30s`), `PRODUCT_ID` (4).
+
+**Cache comparison:** run the identical command twice — once with Redis running and once after `docker stop orderflow-redis` — on the same machine, same data and no other load; [loadtests/compare-cache.ps1](loadtests/compare-cache.ps1) automates this for a compose stack (set `SA_PASSWORD` and optionally `COMPOSE_NETWORK`).
+
+### Measured results (local test results, 2026-10-24, one Windows dev machine)
+
+Produced by `loadtests/compare-cache.ps1` against the compose stack (API, SQL Server, Redis in Docker Desktop; k6 in Docker on the compose network), 10 read VUs + 2 create VUs, 20 s, product 4 restocked to 1,000,000, raw output in `loadtests/k6-redis-up.txt` / `k6-redis-down.txt`:
+
+| | Redis up | Redis stopped (SQL fallback) |
+|---|---|---|
+| Total throughput (reads + creates) | 3,702.8 req/s | 1,931.8 req/s |
+| `http_req_duration` p95 | 4.77 ms | 9.43 ms |
+| Read p95 (`order_read_ms`) | 4.44 ms | 8.58 ms |
+| Create p95 (`order_create_ms`) | 61.33 ms | 76.38 ms |
+| Failed requests / checks | 0 / 75,787 · 0 failed checks | 0 / 39,322 · 0 failed checks |
+
+Caveats: a single run per condition (no repetitions or variance), one hot order read repeatedly, client, API and database sharing one machine, so these numbers show the relative cache effect on this hardware, not production capacity. Throughput is dominated by the read scenario, so the creates-per-second figure is lower than the total.
+
+## 13. Trade-offs & known limitations
+
+- Single `StockQuantity` per product (no warehouses, no separate reserved/available split, no stock history ledger).
+- Reservation at order creation means unpaid `Pending` orders hold stock until completed/cancelled/expired; there is no payment integration.
+- The dashboard read model and cache invalidation are **eventually consistent** (outbox poll interval, default ~2 s). Money values use `decimal`; single currency.
+- The outbox runs inside the API process (no separate worker or broker). It is at-least-once; multiple API instances are safe thanks to row-level claiming, but throughput is bounded by SQL polling. Moving to a broker (e.g. RabbitMQ/Kafka) would be the next step for scale.
+- Auth is a lean `Users` table + JWT: no refresh tokens, token revocation, email confirmation or password reset; access tokens are valid until expiry.
+- Order cache holds data for up to the TTL if the outbox invalidation is delayed.
+- Product management endpoints are not implemented (catalog is seeded).
+- Not verified: a full healthy `docker compose up`, a real GitHub Actions run, the real-Redis tests, and the cache on/off benchmark comparison (see sections above). This project is a portfolio demonstration and is **not** claimed to be production ready. Tests use LocalDB locally rather than Testcontainers.
+
+## 14. Contributing & license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Licensed under the [MIT License](LICENSE).

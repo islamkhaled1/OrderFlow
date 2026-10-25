@@ -12,49 +12,18 @@ public class CreateOrderCommandValidatorTests
     [Fact]
     public void Validate_ValidCommand_PassesValidation()
     {
-        // Arrange
-        var command = new CreateOrderCommand(1, new List<OrderItemRequestDto>
-        {
-            new(1, 2),
-            new(2, 1)
-        });
+        var command = new CreateOrderCommand(new List<OrderItemRequestDto> { new(1, 2), new(2, 1) });
 
-        // Act
-        var result = _validator.Validate(command);
-
-        // Assert
-        result.IsValid.Should().BeTrue();
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-5)]
-    public void Validate_InvalidCustomerId_FailsValidation(int invalidCustomerId)
-    {
-        // Arrange
-        var command = new CreateOrderCommand(invalidCustomerId, new List<OrderItemRequestDto>
-        {
-            new(1, 1)
-        });
-
-        // Act
-        var result = _validator.Validate(command);
-
-        // Assert
-        result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(e => e.PropertyName == "CustomerId");
+        _validator.Validate(command).IsValid.Should().BeTrue();
     }
 
     [Fact]
     public void Validate_EmptyItemsList_FailsValidation()
     {
-        // Arrange
-        var command = new CreateOrderCommand(1, new List<OrderItemRequestDto>());
+        var command = new CreateOrderCommand(new List<OrderItemRequestDto>());
 
-        // Act
         var result = _validator.Validate(command);
 
-        // Assert
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.PropertyName == "Items");
     }
@@ -64,16 +33,10 @@ public class CreateOrderCommandValidatorTests
     [InlineData(-1)]
     public void Validate_InvalidQuantity_FailsValidation(int invalidQuantity)
     {
-        // Arrange
-        var command = new CreateOrderCommand(1, new List<OrderItemRequestDto>
-        {
-            new(1, invalidQuantity)
-        });
+        var command = new CreateOrderCommand(new List<OrderItemRequestDto> { new(1, invalidQuantity) });
 
-        // Act
         var result = _validator.Validate(command);
 
-        // Assert
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.PropertyName.Contains("Quantity"));
     }
@@ -83,17 +46,19 @@ public class CreateOrderCommandValidatorTests
     [InlineData(-1)]
     public void Validate_InvalidProductId_FailsValidation(int invalidProductId)
     {
-        // Arrange
-        var command = new CreateOrderCommand(1, new List<OrderItemRequestDto>
-        {
-            new(invalidProductId, 1)
-        });
+        var command = new CreateOrderCommand(new List<OrderItemRequestDto> { new(invalidProductId, 1) });
 
-        // Act
         var result = _validator.Validate(command);
 
-        // Assert
         result.IsValid.Should().BeFalse();
         result.Errors.Should().Contain(e => e.PropertyName.Contains("ProductId"));
+    }
+
+    [Fact]
+    public void Validate_IdempotencyKeyTooLong_FailsValidation()
+    {
+        var command = new CreateOrderCommand(new List<OrderItemRequestDto> { new(1, 1) }, new string('k', 129));
+
+        _validator.Validate(command).IsValid.Should().BeFalse();
     }
 }

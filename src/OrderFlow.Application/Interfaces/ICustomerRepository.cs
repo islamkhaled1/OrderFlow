@@ -6,4 +6,5 @@ public interface ICustomerRepository
 {
     Task<Customer?> GetByIdAsync(int id, CancellationToken cancellationToken = default);
     Task<bool> ExistsAsync(int id, CancellationToken cancellationToken = default);
+    void Add(Customer customer);
 }

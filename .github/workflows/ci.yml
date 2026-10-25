@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Throwaway password for an ephemeral CI container only; not used anywhere else.
+          MSSQL_SA_PASSWORD: "Ci_Only_Passw0rd!"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P 'Ci_Only_Passw0rd!' -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 20s
+    env:
+      # Server-level connection string; the test factory creates/drops a database per test class.
+      ORDERFLOW_TEST_SQL: "Server=localhost,1433;User Id=sa;Password=Ci_Only_Passw0rd!;TrustServerCertificate=True"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore OrderFlow.sln
+
+      - name: Verify formatting (generated migrations excluded)
+        run: dotnet format OrderFlow.sln --verify-no-changes --no-restore --exclude src/OrderFlow.Infrastructure/Persistence/Migrations
+
+      - name: Build
+        run: dotnet build OrderFlow.sln -c Release --no-restore
+
+      - name: Test (unit + integration against real SQL Server)
+        run: dotnet test OrderFlow.sln -c Release --no-build --logger "trx;LogFileName=results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/TestResults/*.trx"
+
+      - name: Vulnerable packages check
+        run: dotnet list OrderFlow.sln package --vulnerable --include-transitive

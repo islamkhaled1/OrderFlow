@@ -2,6 +2,8 @@ using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using OrderFlow.Application.Common.Behaviors;
+using OrderFlow.Application.Interfaces;
+using OrderFlow.Application.Services;
 
 namespace OrderFlow.Application;
 
@@ -20,6 +22,10 @@ public static class DependencyInjection
 
         // Register FluentValidation
         services.AddValidatorsFromAssembly(assembly);
+
+        // Application services shared by handlers and background jobs
+        services.AddScoped<OrderCancellationService>();
+        services.AddScoped<IOrderExpirationService, OrderExpirationService>();
 
         return services;
     }

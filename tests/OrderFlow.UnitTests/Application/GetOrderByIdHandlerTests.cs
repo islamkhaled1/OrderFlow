@@ -17,10 +17,47 @@ public class GetOrderByIdHandlerTests
     private readonly Mock<IOrderRepository> _orderRepoMock = new();
     private readonly Mock<ICacheService> _cacheServiceMock = new();
     private readonly Mock<ILogger<GetOrderByIdHandler>> _loggerMock = new();
+    private readonly Mock<ICurrentUser> _currentUserMock = new();
     private readonly IOptions<CachingOptions> _cachingOptions = Options.Create(new CachingOptions { OrderDetailsExpirationMinutes = 10 });
 
+    public GetOrderByIdHandlerTests()
+    {
+        // Existing scenarios exercise caching, so the caller is an administrator unless a test says otherwise.
+        _currentUserMock.SetupGet(u => u.IsAdmin).Returns(true);
+    }
+
     private GetOrderByIdHandler CreateHandler() =>
-        new(_orderRepoMock.Object, _cacheServiceMock.Object, _cachingOptions, _loggerMock.Object);
+        new(_orderRepoMock.Object, _cacheServiceMock.Object, _currentUserMock.Object, _cachingOptions, _loggerMock.Object);
+
+    [Fact]
+    public async Task Handle_WhenCachedOrderBelongsToSomeoneElse_ThrowsNotFoundEvenOnCacheHit()
+    {
+        var cachedDto = new OrderDetailsDto(42, 1, "John Doe", DateTime.UtcNow, "Pending", 100m, new List<OrderItemDto>());
+        _cacheServiceMock
+            .Setup(c => c.GetAsync<OrderDetailsDto>("order:42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cachedDto);
+        _currentUserMock.SetupGet(u => u.IsAdmin).Returns(false);
+        _currentUserMock.SetupGet(u => u.CustomerId).Returns(2);
+
+        var act = () => CreateHandler().Handle(new GetOrderByIdQuery(42), CancellationToken.None);
+
+        await act.Should().ThrowAsync<NotFoundException>();
+    }
+
+    [Fact]
+    public async Task Handle_WhenCachedOrderBelongsToCaller_ReturnsIt()
+    {
+        var cachedDto = new OrderDetailsDto(42, 7, "Me", DateTime.UtcNow, "Pending", 100m, new List<OrderItemDto>());
+        _cacheServiceMock
+            .Setup(c => c.GetAsync<OrderDetailsDto>("order:42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cachedDto);
+        _currentUserMock.SetupGet(u => u.IsAdmin).Returns(false);
+        _currentUserMock.SetupGet(u => u.CustomerId).Returns(7);
+
+        var result = await CreateHandler().Handle(new GetOrderByIdQuery(42), CancellationToken.None);
+
+        result.OrderId.Should().Be(42);
+    }
 
     [Fact]
     public async Task Handle_WhenCacheHit_ReturnsCachedDtoWithoutCallingRepository()

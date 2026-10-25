@@ -1,4 +1,4 @@
-﻿groups:
+groups:
   - name: orderflow_alerts
     rules:
       - alert: HighErrorRate
@@ -17,4 +17,40 @@
           severity: warning
         annotations:
           summary: "High number of pending orders"
-          description: "There are more than 50 pending orders for over 5 minutes, which may indicate the Background Worker is not processing orders normally."
+          description: "More than 50 orders have been Pending for over 5 minutes. Pending orders hold reserved stock until an admin completes them or the expiration job cancels them; check the admin workflow and the expiration worker."
+
+      - alert: OutboxBacklogGrowing
+        expr: orderflow_outbox_pending > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox backlog is growing"
+          description: "More than 100 outbox messages have been waiting for over 5 minutes. The outbox processor may be failing or Redis may be unavailable (cache invalidation is part of message handling)."
+
+      - alert: OutboxDeadLetters
+        expr: orderflow_outbox_dead_letter_backlog > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox dead letters present"
+          description: "Outbox messages exceeded their retry budget. Inspect GET /api/admin/outbox/dead-letters and requeue after fixing the cause."
+
+      - alert: BackgroundWorkerFailures
+        expr: sum(increase(orderflow_worker_failures_total[10m])) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Background worker is failing repeatedly"
+          description: "A background worker iteration failed more than 3 times in 10 minutes. Check the API logs."
+
+      - alert: CacheErrors
+        expr: sum(rate(orderflow_cache_errors_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis cache errors"
+          description: "Redis operations are failing; the API falls back to SQL Server but latency will increase."

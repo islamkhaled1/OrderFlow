@@ -8,7 +8,8 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 {
     public void Configure(EntityTypeBuilder<Order> builder)
     {
-        builder.ToTable("Orders");
+        builder.ToTable("Orders", t =>
+            t.HasCheckConstraint("CK_Orders_Total_NonNegative", "[Total] >= 0"));
 
         builder.HasKey(o => o.Id);
 
@@ -23,6 +24,13 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.Property(o => o.CreatedAt)
             .IsRequired();
+
+        builder.Property(o => o.CancellationReason)
+            .HasMaxLength(500);
+
+        // Optimistic concurrency token: guards state transitions (cancel vs complete vs expire).
+        builder.Property(o => o.RowVersion)
+            .IsRowVersion();
 
         // Foreign Key to Customer
         builder.HasOne(o => o.Customer)
@@ -39,7 +47,6 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.Navigation(o => o.Items)
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        // Required indexes for performance and background processing
         builder.HasIndex(o => o.CustomerId)
             .HasDatabaseName("IX_Orders_CustomerId");
 
@@ -48,5 +55,14 @@ public class OrderConfiguration : IEntityTypeConfiguration<Order>
 
         builder.HasIndex(o => o.CreatedAt)
             .HasDatabaseName("IX_Orders_CreatedAt");
+
+        // "My orders" listing: filter by customer, sorted by newest first.
+        builder.HasIndex(o => new { o.CustomerId, o.CreatedAt, o.Id })
+            .HasDatabaseName("IX_Orders_CustomerId_CreatedAt_Id")
+            .IsDescending(false, true, true);
+
+        // Expiry job: find stale pending orders by age.
+        builder.HasIndex(o => new { o.Status, o.CreatedAt })
+            .HasDatabaseName("IX_Orders_Status_CreatedAt");
     }
 }

@@ -8,14 +8,15 @@ namespace OrderFlow.Infrastructure.Services;
 
 /// <summary>
 /// =========================================================================
-/// READ MODEL REFRESH SERVICE
+/// READ MODEL MAINTENANCE
 /// =========================================================================
-/// Rebuilds/refreshes the 'OrderDashboardReadModels' table (Materialized View)
-/// from the authoritative transactional tables (Orders, OrderItems, Customers).
-/// 
-/// NOTE:
-/// The read model table is strictly optimized for fast, denormalized reads
-/// by the dashboard endpoint and is NEVER treated as the source of truth.
+/// Keeps 'OrderDashboardReadModels' (a denormalized table, NEVER the source of truth) in sync with the
+/// transactional tables.
+///  - <see cref="UpsertOrderAsync"/> is the normal path: driven by outbox events, one row per event,
+///    recomputed from current state, so redelivery and reordering are harmless.
+///  - <see cref="RefreshDashboardAsync"/> is the rebuild/reconcile path (admin-triggered): a set-based
+///    delete + insert in one transaction.
+/// Consistency model: eventually consistent; lag = outbox polling interval (default 2s) plus retries.
 /// =========================================================================
 /// </summary>
 public class OrderDashboardRefreshService : IOrderDashboardRefreshService
@@ -31,42 +32,72 @@ public class OrderDashboardRefreshService : IOrderDashboardRefreshService
         _logger = logger;
     }
 
+    public async Task UpsertOrderAsync(int orderId, CancellationToken cancellationToken = default)
+    {
+        var source = await _context.Orders
+            .AsNoTracking()
+            .Where(o => o.Id == orderId)
+            .Select(o => new
+            {
+                CustomerName = o.Customer!.Name,
+                ItemCount = o.Items.Count,
+                o.Total,
+                o.Status,
+                o.CreatedAt
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var existing = await _context.OrderDashboardReadModels
+            .FirstOrDefaultAsync(r => r.OrderId == orderId, cancellationToken);
+
+        if (source is null)
+        {
+            if (existing is not null) _context.OrderDashboardReadModels.Remove(existing);
+        }
+        else if (existing is null)
+        {
+            _context.OrderDashboardReadModels.Add(new OrderDashboardReadModel
+            {
+                OrderId = orderId,
+                CustomerName = source.CustomerName,
+                ItemCount = source.ItemCount,
+                Total = source.Total,
+                Status = source.Status.ToString(),
+                CreatedAt = source.CreatedAt
+            });
+        }
+        else
+        {
+            existing.CustomerName = source.CustomerName;
+            existing.ItemCount = source.ItemCount;
+            existing.Total = source.Total;
+            existing.Status = source.Status.ToString();
+            existing.CreatedAt = source.CreatedAt;
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task RefreshDashboardAsync(CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Refreshing OrderDashboardReadModels materialized view from transactional tables...");
+        _logger.LogInformation("Rebuilding OrderDashboardReadModels from transactional tables...");
 
-        try
+        var strategy = _context.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async ct =>
         {
-            // 1. Read transactional order data with joins
-            var transactionalOrders = await _context.Orders
-                .AsNoTracking()
-                .Include(o => o.Customer)
-                .Include(o => o.Items)
-                .ToListAsync(cancellationToken);
+            await using var tx = await _context.Database.BeginTransactionAsync(ct);
 
-            // 2. Project into denormalized read model entries
-            var freshReadModels = transactionalOrders.Select(o => new OrderDashboardReadModel
-            {
-                OrderId = o.Id,
-                CustomerName = o.Customer?.Name ?? "Unknown",
-                ItemCount = o.Items.Count,
-                Total = o.Total,
-                Status = o.Status.ToString(),
-                CreatedAt = o.CreatedAt
-            }).ToList();
+            await _context.Database.ExecuteSqlRawAsync("DELETE FROM OrderDashboardReadModels", ct);
+            await _context.Database.ExecuteSqlRawAsync("""
+                INSERT INTO OrderDashboardReadModels (OrderId, CustomerName, ItemCount, Total, Status, CreatedAt)
+                SELECT o.Id, c.Name, (SELECT COUNT(*) FROM OrderItems i WHERE i.OrderId = o.Id), o.Total, o.Status, o.CreatedAt
+                FROM Orders o
+                JOIN Customers c ON c.Id = o.CustomerId
+                """, ct);
 
-            // 3. Synchronize OrderDashboardReadModels table
-            var existingReadModels = await _context.OrderDashboardReadModels.ToListAsync(cancellationToken);
-            _context.OrderDashboardReadModels.RemoveRange(existingReadModels);
-            await _context.OrderDashboardReadModels.AddRangeAsync(freshReadModels, cancellationToken);
+            await tx.CommitAsync(ct);
+        }, cancellationToken);
 
-            await _context.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("OrderDashboardReadModels refreshed successfully. Total entries: {Count}", freshReadModels.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to refresh OrderDashboardReadModels.");
-            throw;
-        }
+        _logger.LogInformation("OrderDashboardReadModels rebuilt.");
     }
 }

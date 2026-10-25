@@ -22,4 +22,23 @@ public class ProductRepository : IProductRepository
             .Where(p => idList.Contains(p.Id))
             .ToListAsync(cancellationToken);
     }
+
+    public async Task<bool> TryReserveStockAsync(int productId, int quantity, CancellationToken cancellationToken = default)
+    {
+        // Single atomic statement: UPDATE ... SET Stock = Stock - @q WHERE Stock >= @q AND IsActive = 1.
+        // SQL Server serializes concurrent updates of the row, so two requests can never both consume
+        // the last unit, and the CHECK constraint is a second line of defence.
+        var affected = await _context.Products
+            .Where(p => p.Id == productId && p.IsActive && p.StockQuantity >= quantity)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQuantity, p => p.StockQuantity - quantity), cancellationToken);
+
+        return affected == 1;
+    }
+
+    public async Task ReleaseStockAsync(int productId, int quantity, CancellationToken cancellationToken = default)
+    {
+        await _context.Products
+            .Where(p => p.Id == productId)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.StockQuantity, p => p.StockQuantity + quantity), cancellationToken);
+    }
 }

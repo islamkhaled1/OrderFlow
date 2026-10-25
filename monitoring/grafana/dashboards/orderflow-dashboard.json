@@ -223,7 +223,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "orderflow_orders_pending or vector(0)",
+          "expr": "sum(orderflow_orders_pending) or vector(0)",
           "legendFormat": "Pending Orders",
           "refId": "A"
         }

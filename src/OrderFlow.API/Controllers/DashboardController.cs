@@ -1,20 +1,20 @@
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OrderFlow.Application.Common.Models;
 using OrderFlow.Application.DTOs;
 using OrderFlow.Application.Features.Orders.GetDashboardOrders;
+using OrderFlow.Domain.Entities;
 
 namespace OrderFlow.API.Controllers;
 
 /// <summary>
-/// Dashboard endpoint controller.
-/// 
-/// ARCHITECTURAL PRINCIPLE:
-/// This controller reads strictly from the materialized view / read model
-/// table ('OrderDashboardReadModels').
-/// It NEVER executes expensive runtime joins across transactional tables
-/// (Orders, OrderItems, Customers), demonstrating the CQRS Read Model pattern.
+/// Dashboard endpoint (administrators only). Reads strictly from the 'OrderDashboardReadModels'
+/// table and never joins the transactional tables. The read model is eventually consistent: it is updated
+/// by the outbox processor shortly after each order change.
 /// </summary>
 [ApiController]
+[Authorize(Roles = Roles.Admin)]
 [Route("api/[controller]")]
 [Produces("application/json")]
 public class DashboardController : ControllerBase
@@ -26,24 +26,19 @@ public class DashboardController : ControllerBase
         _mediator = mediator;
     }
 
-    /// <summary>
-    /// Retrieves aggregated dashboard order metrics from the Materialized View.
-    /// </summary>
-    /// <remarks>
-    /// CQRS: Query.
-    /// Data Source: OrderDashboardReadModels (SQL Server Read Model).
-    /// NOT the transactional tables. The read model is populated and kept up-to-date
-    /// asynchronously by the background worker.
-    /// </remarks>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A list of denormalized dashboard order records.</returns>
+    /// <summary>Paged dashboard order rows from the read model.</summary>
     [HttpGet("orders")]
-    [ProducesResponseType(typeof(List<OrderDashboardDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<List<OrderDashboardDto>>> GetDashboardOrders(CancellationToken cancellationToken)
+    [ProducesResponseType(typeof(PagedResult<OrderDashboardDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<PagedResult<OrderDashboardDto>>> GetDashboardOrders(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = Paging.DefaultPageSize,
+        [FromQuery] string? status = null,
+        CancellationToken cancellationToken = default)
     {
-        var query = new GetDashboardOrdersQuery();
-        var response = await _mediator.Send(query, cancellationToken);
-
+        var response = await _mediator.Send(new GetDashboardOrdersQuery(page, pageSize, status), cancellationToken);
         return Ok(response);
     }
 }

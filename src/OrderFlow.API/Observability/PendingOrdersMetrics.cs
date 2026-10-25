@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.Metrics;
+using System.Diagnostics.Metrics;
 using Microsoft.EntityFrameworkCore;
 using OrderFlow.Domain.Enums;
 using OrderFlow.Infrastructure.Persistence;

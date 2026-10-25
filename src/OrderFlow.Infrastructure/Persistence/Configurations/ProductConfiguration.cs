@@ -8,7 +8,11 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 {
     public void Configure(EntityTypeBuilder<Product> builder)
     {
-        builder.ToTable("Products");
+        builder.ToTable("Products", t =>
+        {
+            t.HasCheckConstraint("CK_Products_StockQuantity_NonNegative", "[StockQuantity] >= 0");
+            t.HasCheckConstraint("CK_Products_Price_NonNegative", "[Price] >= 0");
+        });
 
         builder.HasKey(p => p.Id);
 
@@ -18,6 +22,12 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 
         builder.Property(p => p.Price)
             .HasPrecision(18, 2)
+            .IsRequired();
+
+        builder.Property(p => p.StockQuantity)
+            .IsRequired();
+
+        builder.Property(p => p.IsActive)
             .IsRequired();
     }
 }

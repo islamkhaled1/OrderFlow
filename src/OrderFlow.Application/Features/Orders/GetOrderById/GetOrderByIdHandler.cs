@@ -13,17 +13,20 @@ public class GetOrderByIdHandler : IRequestHandler<GetOrderByIdQuery, OrderDetai
 {
     private readonly IOrderRepository _orderRepository;
     private readonly ICacheService _cacheService;
+    private readonly ICurrentUser _currentUser;
     private readonly IOptions<CachingOptions> _cachingOptions;
     private readonly ILogger<GetOrderByIdHandler> _logger;
 
     public GetOrderByIdHandler(
         IOrderRepository orderRepository,
         ICacheService cacheService,
+        ICurrentUser currentUser,
         IOptions<CachingOptions> cachingOptions,
         ILogger<GetOrderByIdHandler> logger)
     {
         _orderRepository = orderRepository;
         _cacheService = cacheService;
+        _currentUser = currentUser;
         _cachingOptions = cachingOptions;
         _logger = logger;
     }
@@ -32,31 +35,42 @@ public class GetOrderByIdHandler : IRequestHandler<GetOrderByIdQuery, OrderDetai
     {
         var cacheKey = $"order:{request.Id}";
 
-        // 1. Check Redis cache
-        try
+        // 1. Cache-aside read. The cache is shared by all callers, so it is never an authorization
+        //    source: ownership is checked below against the (cached or fresh) CustomerId.
+        //    ICacheService already treats expected Redis outages as a miss (and records them).
+        var order = await _cacheService.GetAsync<OrderDetailsDto>(cacheKey, cancellationToken);
+
+        if (order != null)
         {
-            var cachedOrder = await _cacheService.GetAsync<OrderDetailsDto>(cacheKey, cancellationToken);
-            if (cachedOrder != null)
-            {
-                _logger.LogInformation("Cache hit for order {OrderId}", request.Id);
-                return cachedOrder;
-            }
+            _logger.LogDebug("Cache hit for order {OrderId}", request.Id);
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogWarning(ex, "Failed to retrieve order {OrderId} from cache. Falling back to database.", request.Id);
+            _logger.LogDebug("Cache miss for order {OrderId}. Fetching from database.", request.Id);
+            order = await LoadFromDatabaseAsync(request.Id, cancellationToken);
+
+            var expirationMinutes = _cachingOptions.Value.OrderDetailsExpirationMinutes > 0
+                ? _cachingOptions.Value.OrderDetailsExpirationMinutes
+                : 5;
+            await _cacheService.SetAsync(cacheKey, order, TimeSpan.FromMinutes(expirationMinutes), cancellationToken);
         }
 
-        // 2. Cache miss or cache failure: Query transactional database
-        _logger.LogInformation("Cache miss for order {OrderId}. Fetching from database.", request.Id);
-        var order = await _orderRepository.GetByIdWithDetailsAsync(request.Id, cancellationToken);
-        if (order == null)
+        // 2. Authorization: customers see only their own orders, admins see all.
+        //    Other customers' orders are reported as 404 so order ids cannot be enumerated.
+        if (!_currentUser.IsAdmin && order.CustomerId != _currentUser.CustomerId)
         {
             throw new NotFoundException(nameof(Order), request.Id);
         }
 
-        // 3. Map to DTO
-        var orderDto = new OrderDetailsDto(
+        return order;
+    }
+
+    private async Task<OrderDetailsDto> LoadFromDatabaseAsync(int id, CancellationToken cancellationToken)
+    {
+        var order = await _orderRepository.GetByIdWithDetailsAsync(id, cancellationToken)
+            ?? throw new NotFoundException(nameof(Order), id);
+
+        return new OrderDetailsDto(
             order.Id,
             order.CustomerId,
             order.Customer?.Name ?? string.Empty,
@@ -68,29 +82,6 @@ public class GetOrderByIdHandler : IRequestHandler<GetOrderByIdQuery, OrderDetai
                 item.Quantity,
                 item.UnitPrice,
                 item.LineTotal
-            )).ToList()
-        );
-
-        // 4. Store in Redis cache with configured expiration
-        try
-        {
-            var expirationMinutes = _cachingOptions.Value.OrderDetailsExpirationMinutes > 0
-                ? _cachingOptions.Value.OrderDetailsExpirationMinutes
-                : 5;
-
-            await _cacheService.SetAsync(
-                cacheKey,
-                orderDto,
-                TimeSpan.FromMinutes(expirationMinutes),
-                cancellationToken);
-
-            _logger.LogInformation("Order {OrderId} stored in cache with TTL {TTL} minutes", request.Id, expirationMinutes);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to cache order {OrderId}. Continuing with database response.", request.Id);
-        }
-
-        return orderDto;
+            )).ToList());
     }
 }
