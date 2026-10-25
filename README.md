@@ -1,12 +1,25 @@
 # OrderFlow — .NET 10 E-Commerce Order Backend
 
-[![CI](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml)
-[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com/)
+[![CI](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml)
+[![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![EF Core 10](https://img.shields.io/badge/EF%20Core-10-512BD4?style=flat-square&logo=dotnet&logoColor=white)](https://learn.microsoft.com/ef/core/)
+[![SQL Server](https://img.shields.io/badge/SQL%20Server-2022-CC2927?style=flat-square&logo=microsoftsqlserver&logoColor=white)](https://www.microsoft.com/sql-server)
+[![Redis](https://img.shields.io/badge/Redis-cache-DC382D?style=flat-square&logo=redis&logoColor=white)](https://redis.io/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](docker-compose.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+
+![Clean Architecture](https://img.shields.io/badge/Clean-Architecture-6C757D?style=flat-square)
+![Vertical Slice](https://img.shields.io/badge/Vertical-Slice-6C757D?style=flat-square)
+![CQRS / MediatR](https://img.shields.io/badge/CQRS-MediatR-6C757D?style=flat-square)
+![Transactional Outbox](https://img.shields.io/badge/Transactional-Outbox-6C757D?style=flat-square)
+![Idempotency](https://img.shields.io/badge/API-Idempotency-6C757D?style=flat-square)
+![Optimistic Concurrency](https://img.shields.io/badge/Optimistic-Concurrency-6C757D?style=flat-square)
+![Rate Limiting](https://img.shields.io/badge/Rate-Limiting-6C757D?style=flat-square)
+![Observability](https://img.shields.io/badge/Observability-OpenTelemetry%20%7C%20Prometheus%20%7C%20Grafana%20%7C%20Jaeger-6C757D?style=flat-square)
 
 OrderFlow is an order-management backend built with **ASP.NET Core (.NET 10)**, **EF Core 10 / SQL Server**, **Redis**, **MediatR (CQRS)** and **OpenTelemetry / Prometheus / Grafana / Jaeger**. The focus is **correct business logic**: stock can never be oversold, retried requests never create duplicate orders, order state changes follow an explicit state machine, and read models/caches are updated through a transactional outbox.
 
-> The CI badge points at the workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml); it only reflects reality after the workflow has run on GitHub.
+> The CI badge is generated live by GitHub from [.github/workflows/ci.yml](.github/workflows/ci.yml) and links to its [workflow runs](https://github.com/islamkhaled1/OrderFlow/actions/workflows/ci.yml). The other badges only describe the technologies and patterns used; they are not quality certifications. **Public deployment: pending** (run it locally with Docker Compose, see [Getting started](#7-getting-started)).
 
 ## Table of contents
 
@@ -61,7 +74,7 @@ graph TD
     GRAF[Grafana] --> PROM
 ```
 
-Dependencies point inward (Domain has no external dependencies). Features live in vertical slices under `OrderFlow.Application/Features/*`.
+**Clean Architecture** defines the project layering: dependencies point inward and Domain has no external dependencies. **Vertical Slice Architecture** organises the code *inside* the Application layer: each use case (command/query, handler, validator, DTOs) lives together under `OrderFlow.Application/Features/*`. The two are complementary: slices sit within the Clean Architecture layers rather than replacing them.
 
 **Create-order flow** (single SQL transaction):
 
@@ -241,7 +254,7 @@ docker compose up -d --build
 
 Compose refuses to start if `MSSQL_SA_PASSWORD`, `JWT_SIGNING_KEY` or `GRAFANA_ADMIN_PASSWORD` are missing — there are no default secrets in the repo.
 
-> **Verification status (2026-10-24, Docker Desktop on Windows):** `docker compose config -q` and `docker compose up -d --build` succeeded and all six services came up (SQL Server and Redis healthy). Observed: `/health/live` and `/health/ready` return 200 and `/health` reports `sqlserver` and `redis` Healthy; both migrations applied on startup and seed data/admin were created; register → create order → idempotent replay (same order id) → get order → anonymous 401 behaved as documented; Prometheus target `orderflow-api` is `up`, all 6 alert rules load with health `ok`, and `orderflow_orders_created_total` reflected the new order; Grafana has the provisioned `Prometheus` datasource and `OrderFlow Dashboard`; Jaeger has the `OrderFlow` service with traces for HTTP, `CreateOrder` and `GetOrderById` spans. Not covered: visual review of the Grafana dashboard panels, alert firing, and a real GitHub Actions run.
+> **Verification status (2026-10-24, Docker Desktop on Windows):** `docker compose config -q` and `docker compose up -d --build` succeeded and all six services came up (SQL Server and Redis healthy). Observed: `/health/live` and `/health/ready` return 200 and `/health` reports `sqlserver` and `redis` Healthy; both migrations applied on startup and seed data/admin were created; register → create order → idempotent replay (same order id) → get order → anonymous 401 behaved as documented; Prometheus target `orderflow-api` is `up`, all 6 alert rules load with health `ok`, and `orderflow_orders_created_total` reflected the new order; Grafana has the provisioned `Prometheus` datasource and `OrderFlow Dashboard`; Jaeger has the `OrderFlow` service with traces for HTTP, `CreateOrder` and `GetOrderById` spans. Not covered: alert firing (rules were verified as loaded and inactive).
 >
 > **Troubleshooting:**
 > - *Name conflict* (`container name "/orderflow-prometheus" is already in use`): the compose file uses fixed `container_name`s and an older stack under another project name can hold them. Check `docker ps -a --filter name=orderflow-` and remove only the stale OrderFlow containers, or run `docker compose down` in the project that owns them.
@@ -306,7 +319,7 @@ The 4 skipped tests are the real-Redis tests. With `ORDERFLOW_TEST_REDIS=localho
 
 Covered scenarios include: 100 concurrent orders against stock of 10 (exactly 10 succeed, stock ends at 0, never negative), concurrent same-key idempotent requests (one order), double-cancel releases stock once, cancel vs. complete races, invalid transitions, authentication/authorization and ownership rules, outbox processing/retry/dead-letter, cache hit/miss/Redis-down fallback, pagination bounds and migration/model consistency.
 
-The GitHub Actions workflow ([ci.yml](.github/workflows/ci.yml)) restores, checks formatting, builds in Release, runs all tests against a SQL Server 2022 service container and lists vulnerable packages. It has not yet been observed running on GitHub.
+The GitHub Actions workflow ([ci.yml](.github/workflows/ci.yml)) restores, checks formatting, builds in Release, runs all tests against a SQL Server 2022 service container and lists vulnerable packages. The latest run on `main` (commit `c461266`, after the line-ending fix) completed successfully; the live badge above always shows the current result.
 
 ## 11. Observability
 
@@ -371,7 +384,7 @@ Caveats: a single run per condition (no repetitions or variance), one hot order 
 - Auth is a lean `Users` table + JWT: no refresh tokens, token revocation, email confirmation or password reset; access tokens are valid until expiry.
 - Order cache holds data for up to the TTL if the outbox invalidation is delayed.
 - Product management endpoints are not implemented (catalog is seeded).
-- Not verified: a full healthy `docker compose up`, a real GitHub Actions run, the real-Redis tests, and the cache on/off benchmark comparison (see sections above). This project is a portfolio demonstration and is **not** claimed to be production ready. Tests use LocalDB locally rather than Testcontainers.
+- Not done: a public deployment (no hosted Swagger URL yet), alert-firing drills and benchmark repetitions. This project is a portfolio demonstration and is **not** claimed to be production ready. Tests use LocalDB locally rather than Testcontainers.
 
 ## 14. Contributing & license
 
